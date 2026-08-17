@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+DerivedData/
+build/
+
+# SwiftPM
+.swiftpm/
+.build/
+
+# 签名与公证材料（禁止入库，CI 用 Secrets）
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+
+# 本地模型文件（WhisperKit 等，运行时下载）
+Models/
+*.mlmodelc/
