@@ -14,6 +14,7 @@ macOS 菜单栏常驻的语音驱动 AI 编程工具：按住全局热键说话 
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南：环境搭建、提交前检查链、Commit/PR 规范 |
 | [docs/TESTING.md](docs/TESTING.md) | 测试要求：质量门禁、单测规范、真机手动测试矩阵 |
 | [docs/implementation-notes.md](docs/implementation-notes.md) | 实现细节知识库：踩坑、架构要点、发布流程 |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | 用户使用说明（面向最终用户，随开发持续更新） |
 
 ## 开发环境
 
