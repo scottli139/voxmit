@@ -17,18 +17,24 @@
 
 > 状态标记：✅ 已完成 / ⏳ 进行中 / 📋 未开始。任务后括号内为对应的需求文档 FR 编号或章节。
 
-### Phase 0: 工程脚手架 📋
+### Phase 0: 工程脚手架 ✅
 
 > 目标：可构建运行的菜单栏空壳，后续所有模块的地基。结构按需求文档 §4.6。
 
-- [ ] Xcode 工程创建：macOS App 模板、Swift 6、deployment target macOS 14.0、App Target + 单测 Target
-- [ ] 构建设置：`LSUIElement=YES`、关闭 App Sandbox、开启 Hardened Runtime、`NSMicrophoneUsageDescription` 文案
-- [ ] SPM 依赖接入 WhisperKit（GRDB / Sparkle 到 V1.1 对应任务时再接）
-- [ ] 目录结构落地（Pipeline / Modules / UI / Resources，见需求文档 §4.6）
-- [ ] MenuBarExtra 菜单栏图标 + 状态占位（idle / recording / processing / failed）
-- [ ] Settings 场景骨架 + UserDefaults 设置读写（键清单见需求文档 §9.2）
-- [ ] KeychainHelper：`llm-api-key` 读写（`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`）
-- [ ] 本地调试签名可跑（Developer ID；公证流水线属发布任务）
+- [x] Xcode 工程创建：macOS App 模板、Swift 6、deployment target macOS 14.0、App Target + 单测 Target
+- [x] 构建设置：`LSUIElement=YES`、关闭 App Sandbox、开启 Hardened Runtime、`NSMicrophoneUsageDescription` 文案
+- [x] SPM 依赖接入 WhisperKit（GRDB / Sparkle 到 V1.1 对应任务时再接）
+- [x] 目录结构落地（Pipeline / Modules / UI / Resources，见需求文档 §4.6）
+- [x] MenuBarExtra 菜单栏图标 + 状态占位（idle / recording / processing / failed）
+- [x] Settings 场景骨架 + UserDefaults 设置读写（键清单见需求文档 §9.2）
+- [x] KeychainHelper：`llm-api-key` 读写（`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`）
+- [x] 本地调试签名可跑（ad-hoc；Developer ID 签名 + 公证流水线属发布任务）
+
+- 2026-08-17：Phase 0 落地。手写 objectVersion 70 的 `project.pbxproj`（双 target 用 PBXFileSystemSynchronizedRootGroup，后续新增源码文件免改 pbxproj）+ 共享 scheme；WhisperKit 0.18.0 接入（upToNextMajorVersion ≥ 0.9.0）。
+- 2026-08-17：验证全绿——`xcodebuild -list` / `-resolvePackageDependencies` / `build` / `test`（Swift Testing 2 用例通过：设置默认值注册、Pipeline 初始状态与图标）。
+- 2026-08-17：签名用 ad-hoc（`CODE_SIGN_IDENTITY="-"`，本机钥匙串里的 Developer ID 属别家公司、不可用）；ad-hoc 下 codesign 忽略 Hardened Runtime（构建日志有 note），`ENABLE_HARDENED_RUNTIME=YES` 设置保留，发布构建（Developer ID + 公证）时生效。
+- 2026-08-17：坑——构建设置正确名是 `GENERATE_INFOPLIST_FILE`（不是 `GENERATE_INFOPLIST`，无效设置曾致测试 target 签名失败）；GitHub 连接间歇性超时，SPM 解析靠重试循环完成。
+- 2026-08-17：`Resources/` 与 Hotkey/Audio 等 Modules 子目录暂无内容未建，随对应 Phase 建立；`llm.model` 默认 `moonshot-v1-8k`（§9.2 交由实现按服务商文档定，选低价通用模型，用户可改）。
 
 ### Phase 1: 权限自检与引导 📋 (FR-G5)
 
