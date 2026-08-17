@@ -4,13 +4,15 @@
 
 ## 1. 项目现状（重要）
 
-**本仓库当前处于"需求分析 / 方案设计"阶段，尚无任何代码。**
+**Phase 0 工程脚手架已完成（2026-08-17）：Xcode 工程可构建、可测试；功能模块（热键/音频/转写/润色/注入等）尚未实现，从 Phase 1 起按 `PLAN.md` 推进。**
 
 - 需求文档 `语音编程工具-需求分析与方案说明.md`（v0.3，2026-08-17；§8 开放问题已全部决策，定名 Voxmit）是需求与方案的唯一事实来源。
 - 仓库：https://github.com/scottli139/voxmit（Private，2026-08-17 创建）。
-- 工程文档体系已建立（见下方文档地图）；没有 `Package.swift`、`pyproject.toml`、`package.json`、`Cargo.toml` 等任何构建配置文件；没有 Xcode 工程；没有测试；没有 CI/CD。
-- 因此**当前不存在可执行的构建、测试、部署命令**。下文描述的架构与选型均来自需求文档，是"计划"而非"已实现的现实"。写代码前请以文档为准，不要臆造不存在的模块。
-- 开放问题已决策（需求文档 §8，2026-08-17），可按 `PLAN.md` 从 Phase 0 开工：按需求文档 §4.6 建立 Xcode 工程、按 §4.2 模块划分实现；交互语义（状态机、防误触、Esc 取消、注入目标锁定）以需求文档 §3.4 为准。
+- 构建与测试命令（CI 尚未建立，本地执行）：
+  - `xcodebuild build -scheme Voxmit -destination 'platform=macOS'`
+  - `xcodebuild test -scheme Voxmit -destination 'platform=macOS'`
+- 工程要点：手写 pbxproj（objectVersion 70，`Voxmit/` 与 `VoxmitTests/` 为文件系统同步分组，新增源码文件免改 pbxproj）；本地 ad-hoc 签名；Swift 6 严格并发。踩坑记录见 `PLAN.md` Phase 0 的 Session 记录。
+- §4 的模块划分目前仅落地了工程骨架与接口契约（需求文档 §9.1）；实现模块时以需求文档 §4.2/§3.4 为准，不要臆造尚未实现的行为。
 
 ### 文档地图
 
