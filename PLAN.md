@@ -1,10 +1,11 @@
-# VoicePrompt 开发计划
+# Voxmit 开发计划
 
 > macOS 菜单栏常驻的语音驱动 AI 编程工具 —— 按住热键说话，润色后的 Prompt 自动注入当前 AI 开发工具
 
 ## 项目信息
 
-- **项目名称**: VoicePrompt（暂名，命名决策见需求文档 §8-5）
+- **项目名称**: Voxmit（2026-08-17 定名，见需求文档 §8-5）
+- **仓库**: https://github.com/scottli139/voxmit（Private）
 - **技术栈**: Swift 6 + SwiftUI/AppKit · WhisperKit · OpenAI 兼容 LLM 接口
 - **目标平台**: macOS 14 Sonoma 及以上，优先 Apple Silicon
 - **需求唯一事实来源**: `语音编程工具-需求分析与方案说明.md`（FR 编号、优先级、验收标准以它为准；本文件不复制需求内容，只跟踪任务与进度）

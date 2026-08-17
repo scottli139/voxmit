@@ -1,4 +1,4 @@
-# VoicePrompt 测试要求
+# Voxmit 测试要求
 
 > 本文档定义测试策略与质量门禁的工程化细节。需求层面的测试范围见 `语音编程工具-需求分析与方案说明.md` §9.3；两者冲突时以需求文档为准，并回改本文档。
 
@@ -20,7 +20,7 @@
 
 - 框架：**Swift Testing**（`@Test` / `#expect`）；若工程建立时选择 XCTest，以实际选择为准并更新本节；
 - 可测性：模块协议见需求文档 §9.1；单测通过 mock 协议注入依赖，**禁止在单测中触发真实系统权限弹窗**；
-- mock 集中管理：`VoicePromptTests/Mocks/`（MockTranscriptionEngine / MockRefiner / MockInjector / MockClock 等）；
+- mock 集中管理：`VoxmitTests/Mocks/`（MockTranscriptionEngine / MockRefiner / MockInjector / MockClock 等）；
 - 命名：`被测行为_场景_期望`，如 `hotkeyDown_shortPress_ignored`；
 - MVP 必测清单：
   - **状态机**：短按（<200ms）忽略 / 录音 <300ms 误触取消 / Esc 取消 / 5 分钟自动结束 / 转写失败 / 润色失败回退后的注入路径；

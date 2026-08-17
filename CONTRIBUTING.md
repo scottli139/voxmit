@@ -1,6 +1,6 @@
-# 参与贡献 VoicePrompt
+# 参与贡献 Voxmit
 
-感谢你有兴趣参与贡献！VoicePrompt 是一款 macOS 菜单栏常驻的语音驱动 AI 编程工具（Swift 6 + SwiftUI/AppKit）。欢迎各种形式的贡献——bug 报告、新功能、文档、测试。
+感谢你有兴趣参与贡献！Voxmit 是一款 macOS 菜单栏常驻的语音驱动 AI 编程工具（Swift 6 + SwiftUI/AppKit）。欢迎各种形式的贡献——bug 报告、新功能、文档、测试。
 
 > 🤖 **欢迎使用 AI 辅助贡献。** 仓库根目录的 `AGENTS.md` 是为 AI 助手准备的上下文文件；任务看板在 `PLAN.md`；需求唯一事实来源是 `语音编程工具-需求分析与方案说明.md`。
 
@@ -9,9 +9,9 @@
 前置条件：macOS 14+、Xcode 16+（Swift 6 工具链）。
 
 ```bash
-git clone <仓库地址>
-cd voiceprompt
-open VoicePrompt.xcodeproj   # SPM 依赖（WhisperKit 等）由 Xcode 自动解析
+git clone https://github.com/scottli139/voxmit.git
+cd voxmit
+open Voxmit.xcodeproj   # SPM 依赖（WhisperKit 等）由 Xcode 自动解析
 ```
 
 真机调试需为本机开发构建逐项授予三项系统权限（麦克风 / 输入监控 / 辅助功能），权限矩阵与降级行为见需求文档 §4.4。
@@ -23,8 +23,8 @@ open VoicePrompt.xcodeproj   # SPM 依赖（WhisperKit 等）由 Xcode 自动解
 以下检查链都要过——CI 会强制执行：
 
 ```bash
-xcodebuild build -scheme VoicePrompt -destination 'platform=macOS'   # 编译
-xcodebuild test -scheme VoicePrompt -destination 'platform=macOS'    # 单元测试
+xcodebuild build -scheme Voxmit -destination 'platform=macOS'   # 编译
+xcodebuild test -scheme Voxmit -destination 'platform=macOS'    # 单元测试
 swiftlint                                                            # 代码风格（Phase 0 接入）
 swiftformat --lint .                                                 # 格式（Phase 0 接入）
 ```
