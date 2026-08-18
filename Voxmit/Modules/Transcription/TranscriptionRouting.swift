@@ -39,14 +39,28 @@ final class TranscriptionEngineRouter: TranscriptionEngine, ObservableObject, @u
 
     var name: String { current.name }
 
-    /// 切换引擎（主线程）
+    /// 切换引擎（主线程）：总是替换引用（调用方可能换了同类型的新实例）；
+    /// 仅名称变化时通知 UI 与打点（设置写入会触发重复切换，防刷屏）
     func use(_ engine: any TranscriptionEngine) {
         dispatchPrecondition(condition: .onQueue(.main))
-        objectWillChange.send()
+        let previous = lock.withLock { _current }
         lock.withLock { _current = engine }
+        guard previous.name != engine.name else { return }
+        objectWillChange.send()
+        AppLog.info(.transcription, "转写引擎切换：\(previous.name) → \(engine.name)")
     }
 
     func transcribe(samples: [Float]) async throws -> String {
-        try await current.transcribe(samples: samples)
+        let startedAt = Date()
+        do {
+            let text = try await current.transcribe(samples: samples)
+            let milliseconds = Int(Date().timeIntervalSince(startedAt) * 1000)
+            // 只记元数据（字数/耗时/引擎），不记文本本体（隐私红线）
+            AppLog.info(.transcription, "转写完成：\(text.count) 字，耗时 \(milliseconds)ms（引擎 \(self.current.name)）")
+            return text
+        } catch {
+            AppLog.error(.transcription, "转写失败（引擎 \(self.current.name)）：\(error.localizedDescription)")
+            throw error
+        }
     }
 }

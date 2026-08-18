@@ -44,11 +44,16 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
         return directory
     }
 
-    /// 模型下载管理器（small ≈ 500MB；变体随 asr.modelVariant 设置）
+    /// 模型下载管理器（small ≈ 500MB；变体随 asr.modelVariant 设置；端点策略随 asr.modelRepoEndpoint）
     private(set) lazy var modelDownloadManager = ModelDownloadManager(
         downloader: WhisperKitModelDownloader(
             variantProvider: { UserDefaults.standard.string(forKey: SettingsKeys.asrModelVariant) ?? "small" },
-            downloadBase: Self.modelsDirectory
+            downloadBase: Self.modelsDirectory,
+            endpointChain: {
+                ModelRepoEndpointResolver.attemptOrder(
+                    setting: UserDefaults.standard.string(forKey: SettingsKeys.asrModelRepoEndpoint)
+                )
+            }
         )
     )
 
@@ -63,6 +68,9 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
     /// 引擎路由器：Pipeline 持有的稳定引用，运行时热切换
     private(set) lazy var transcriptionRouter = TranscriptionEngineRouter(current: speechEngine)
 
+    /// 诊断日志导出（设置页「诊断」区）
+    private(set) lazy var diagnosticExporter = DiagnosticLogExporter(permissionManager: permissionManager)
+
     /// 引擎切换观察（模型就绪/设置变更）
     private var engineStateCancellable: AnyCancellable?
     private var engineDefaultsObserver: (any NSObjectProtocol)?
@@ -71,6 +79,8 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
         // 单测以 App 为宿主运行（TEST_HOST）：不弹引导窗口、不做权限同步接线，
         // 保证测试不依赖真实权限状态（docs/TESTING.md）
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+
+        AppLog.info(.app, "Voxmit 启动完成（版本 \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知")）")
 
         // 权限快照实时同步给 Pipeline（降级决策数据源，需求文档 §4.4）
         permissionSync = permissionManager.$snapshot.sink { [pipeline] snapshot in
@@ -146,8 +156,12 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
                     try await whisperKitEngine.activate()
                     transcriptionRouter.use(whisperKitEngine)
                 } catch {
-                    // 模型加载失败：保持 Speech 兜底，用户可在设置页看到当前引擎
+                    // 激活失败 = 目录在但模型不可加载（残骸/不完整）：保持 Speech 兜底，
+                    // 并把下载状态打回 failed 以便设置页重试（failed 态 resolve 落 speech，
+                    // 不会再次激活，无 catch→failed→recompute 循环）
+                    AppLog.error(.transcription, "WhisperKit 激活失败，保持 Speech 兜底：\(error.localizedDescription)")
                     transcriptionRouter.use(speechEngine)
+                    modelDownloadManager.markInvalidModel(reason: "模型文件不完整，请在设置中重试下载")
                 }
             }
         }

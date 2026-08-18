@@ -18,6 +18,8 @@ protocol ModelDownloading: Sendable {
     func existingModelFolder() -> URL?
     /// 执行下载并返回模型目录；progress 回调 0...1；实现需支持断点续传
     func download(progress: @Sendable @escaping (Double) -> Void) async throws -> URL
+    /// 删除不完整模型目录（自愈重下前置；失败不阻塞调用方）
+    func removeInvalidModel()
 }
 
 /// 模型下载管理器（@MainActor；状态经 @Published 供设置页与引擎路由订阅）
@@ -27,6 +29,8 @@ final class ModelDownloadManager: ObservableObject {
 
     private let downloader: any ModelDownloading
     private var downloadTask: Task<Void, Never>?
+    /// 会话级自愈闸：激活失败后的自动重试只进行一次，防"激活失败↔重试"循环
+    private var autoRetryUsed = false
 
     init(downloader: any ModelDownloading) {
         self.downloader = downloader
@@ -43,6 +47,7 @@ final class ModelDownloadManager: ObservableObject {
     func startDownloadIfNeeded() {
         guard state != .ready, downloadTask == nil else { return }
         state = .downloading(0)
+        AppLog.info(.download, "模型下载任务启动")
         downloadTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -54,9 +59,16 @@ final class ModelDownloadManager: ObservableObject {
                 // 落盘校验：返回目录真实存在才置 ready（模型可加载性由引擎激活时兜底）
                 var isDirectory: ObjCBool = false
                 let exists = FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory)
-                state = exists && isDirectory.boolValue ? .ready : .failed("模型文件校验失败")
+                if exists && isDirectory.boolValue {
+                    state = .ready
+                    AppLog.info(.download, "模型就绪")
+                } else {
+                    state = .failed("模型文件校验失败")
+                    AppLog.error(.download, "模型落盘校验失败：\(folder.path)")
+                }
             } catch {
                 state = .failed(error.localizedDescription)
+                AppLog.error(.download, "模型下载失败：\(error.localizedDescription)")
             }
             downloadTask = nil
         }
@@ -66,5 +78,22 @@ final class ModelDownloadManager: ObservableObject {
     func reevaluate() {
         guard downloadTask == nil else { return }
         state = downloader.existingModelFolder() != nil ? .ready : .notStarted
+    }
+
+    /// 模型激活/加载失败时自愈：删除不完整产物目录（强制干净重下）→ 打回失败态
+    /// （设置页可重试、不再误显示"已就绪"）→ 每会话自动重试下载一次（防循环：
+    /// 自动重试后再失败则停在 failed 态等手动重试）。
+    /// 幂等；下载进行中不打断。failed 态 resolve 落 speech，不会再次激活，无死循环。
+    func markInvalidModel(reason: String) {
+        guard downloadTask == nil else { return }
+        downloader.removeInvalidModel()
+        state = .failed(reason)
+        if !autoRetryUsed {
+            autoRetryUsed = true
+            AppLog.notice(.download, "模型不完整（\(reason)），本会话自动重试下载一次")
+            startDownloadIfNeeded()
+        } else {
+            AppLog.error(.download, "自动重试已用尽，保持失败态待手动重试：\(reason)")
+        }
     }
 }

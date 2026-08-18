@@ -2,6 +2,39 @@ import Foundation
 import Testing
 @testable import Voxmit
 
+/// HUD 布局尺寸钳制（长文案换行修复）
+struct HUDLayoutTests {
+
+    @Test func clampedSize_belowMinimum_clampedToFloor() {
+        let size = HUDLayout.clampedSize(NSSize(width: 0, height: 0))
+        #expect(size.width == HUDLayout.minWidth)
+        #expect(size.height == HUDLayout.minHeight)
+    }
+
+    @Test func clampedSize_withinRange_unchanged() {
+        let size = HUDLayout.clampedSize(NSSize(width: 300, height: 60))
+        #expect(size.width == 300)
+        #expect(size.height == 60)
+    }
+
+    @Test func clampedSize_overMaxWidth_capped() {
+        // 超宽内容（不换行的极端情况）被压到上限
+        let size = HUDLayout.clampedSize(NSSize(width: 900, height: 60))
+        #expect(size.width == HUDLayout.maxWidth)
+    }
+
+    @Test func clampedSize_tallContent_heightNotCapped() {
+        // 换行撑高不限制高度上限（只钳最小值）
+        let size = HUDLayout.clampedSize(NSSize(width: 300, height: 200))
+        #expect(size.height == 200)
+    }
+
+    @Test func textColumnFitsPanelBounds() {
+        // 文案列宽上限 + 图标 + 内边距 不超出面板宽度上限（防布局溢出）
+        #expect(HUDLayout.textColumnMaxWidth + 100 <= HUDLayout.maxWidth)
+    }
+}
+
 /// HUD 显示策略（HUDVisibility，纯逻辑）
 struct HUDVisibilityTests {
 

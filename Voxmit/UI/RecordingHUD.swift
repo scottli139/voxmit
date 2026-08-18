@@ -81,6 +81,23 @@ private extension VoicePipelineState {
     }
 }
 
+/// HUD 布局常量与尺寸钳制（纯逻辑可单测）
+enum HUDLayout {
+    static let minWidth: CGFloat = 160
+    /// 面板宽度上限（长文案在此宽度内换行展示）
+    static let maxWidth: CGFloat = 420
+    static let minHeight: CGFloat = 44
+    /// 文案列宽上限：长句（如失败原因指引）按此换行，2–3 行内完整可读
+    static let textColumnMaxWidth: CGFloat = 320
+
+    static func clampedSize(_ fitting: NSSize) -> NSSize {
+        NSSize(
+            width: min(max(fitting.width, minWidth), maxWidth),
+            height: max(fitting.height, minHeight)
+        )
+    }
+}
+
 /// HUD 视图模型：订阅 Pipeline 与 AudioCapture，汇总为显示属性
 @MainActor
 final class RecordingHUDViewModel: ObservableObject {
@@ -197,6 +214,9 @@ struct RecordingHUDView: View {
                 HStack(spacing: 6) {
                     Text(model.statusText)
                         .font(.callout.weight(.medium))
+                        // 长文案（如失败原因指引）换行展示，不截断
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                     if model.showsUnrefinedBadge {
                         Text("未润色")
                             .font(.caption2)
@@ -208,6 +228,8 @@ struct RecordingHUDView: View {
                 }
                 subtitle
             }
+            // 文案列宽上限；超出部分换行（面板尺寸由 Controller 随内容调整）
+            .frame(maxWidth: HUDLayout.textColumnMaxWidth, alignment: .leading)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -257,11 +279,15 @@ struct RecordingHUDView: View {
             Text(banner)
                 .font(.caption)
                 .foregroundStyle(.orange)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         } else if !model.targetAppName.isEmpty, case .recording = model.phase {
             // §3.4.3：录音中显示当前注入目标（Phase 7 实装真实快照）
             Text("注入目标：\(model.targetAppName)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -274,6 +300,8 @@ final class RecordingHUDController {
     private var panel: NSPanel?
     private var hideTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
+    /// 内容尺寸变化订阅（KVO preferredContentSize → 面板随内容调整，长文案不截断）
+    private var sizeObserver: AnyCancellable?
 
     init(
         pipeline: VoicePipeline,
@@ -306,11 +334,16 @@ final class RecordingHUDController {
 
     private func show() {
         let panel = ensurePanel()
+        // 尺寸随内容（长文案换行后撑高），再定位（保持底部居中）
+        if let hosting = panel.contentViewController as? NSHostingController<RecordingHUDView> {
+            applyContentSize(hosting.preferredContentSize)
+        }
         positionBottomCenter(panel)
         panel.alphaValue = 1
         // 非激活面板：不 makeKey、不 activate，焦点留在目标 App；
         // 用 orderFrontRegardless——LSUIElement App 未激活时 orderFront 可能不生效（真机实测坑）
         panel.orderFrontRegardless()
+        AppLog.debug(.hud, "HUD 显示")
     }
 
     private func scheduleHide(after delay: TimeInterval) {
@@ -329,6 +362,7 @@ final class RecordingHUDController {
 
     private func hide() {
         guard let panel else { return }
+        AppLog.debug(.hud, "HUD 隐藏")
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.2
             panel.animator().alphaValue = 0
@@ -344,6 +378,13 @@ final class RecordingHUDController {
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
         let hostingController = NSHostingController(rootView: RecordingHUDView(model: viewModel))
+        // 内容尺寸变化（长文案换行撑高等）→ 自动重算 preferredContentSize，KVO 订阅后调整面板
+        hostingController.sizingOptions = .preferredContentSize
+        sizeObserver = hostingController.publisher(for: \.preferredContentSize)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] size in
+                Task { @MainActor in self?.applyContentSize(size) }
+            }
         let panel = NSPanel(contentViewController: hostingController)
         // 不抢焦点（硬要求）：点击不激活、不接受键鼠、不在 Exposé 中干扰
         panel.styleMask = [.borderless, .nonactivatingPanel]
@@ -364,14 +405,22 @@ final class RecordingHUDController {
     private func positionBottomCenter(_ panel: NSPanel) {
         // LSUIElement App 无键盘焦点窗口时 NSScreen.main 可能为 nil，回退首块屏
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let fitting = panel.contentViewController?.preferredContentSize
-            ?? NSSize(width: 240, height: 56)
-        let size = NSSize(width: min(max(fitting.width, 160), 520), height: max(fitting.height, 44))
-        panel.setContentSize(size)
+        let size = panel.frame.size
         let origin = NSPoint(
             x: screen.visibleFrame.midX - size.width / 2,
             y: screen.visibleFrame.minY + 28
         )
         panel.setFrameOrigin(origin)
+    }
+
+    /// 内容尺寸 → 面板尺寸（钳制上下限；长文案换行后撑高，保持底部锚点居中）
+    private func applyContentSize(_ size: NSSize) {
+        guard let panel else { return }
+        let clamped = HUDLayout.clampedSize(size)
+        let current = panel.contentView?.frame.size ?? .zero
+        // 防 KVO → resize → 布局 → KVO 回环：尺寸未变（容差内）不重设
+        guard abs(clamped.width - current.width) > 0.5 || abs(clamped.height - current.height) > 0.5 else { return }
+        panel.setContentSize(clamped)
+        positionBottomCenter(panel)
     }
 }

@@ -93,6 +93,7 @@
 - 2026-08-18：关键设计——状态机保持"终止态即刻回 idle"不变，停留计时在 HUD 侧（HUDVisibility 纯函数决策延迟，Controller 按 PipelineClock 调度）；两处需对"终止态后紧跟的 idle"去抖：Controller 已有 hideTask 时忽略该 idle、ViewModel 锁存终止态展示（否则成功对勾会被瞬间清空）。
 - 2026-08-18：验证全绿——build 成功、test 86 用例通过（63 + 新增 23：可见性矩阵 7 / 波形历史 4 / 提示映射 1 / 视图模型 7 / Pipeline 报告 4）。nonactivating 焦点保持、全屏/多 Space 可见性、各反馈态视觉属真机手动验收项。
 - 2026-08-18：架构设计文档 `docs/ARCHITECTURE.md` 建立（设计意图 + Phase 0–4 as-built 实况；§12 记录与需求文档的偏离点）；AGENTS.md 与 README.md 文档地图同步收录。
+- 2026-08-18：真机修复——HUD 失败态长文案被截断（只剩一个"失"字）。根因：面板尺寸仅在 show() 时取一次且文案无换行约束，长句被 HStack 压缩截断。修法：文案列宽上限 320 + `lineLimit(3)` + `fixedSize(vertical:)`；hosting controller 开 `sizingOptions = .preferredContentSize`，KVO 订阅尺寸变化实时调整面板（`HUDLayout` 纯逻辑钳制 160–420 宽、防 resize 回环）；成功/角标等反馈态同口径。单测 +5（160 总），build/test 全绿。
 
 ### Phase 5: 本地转写 ✅ (FR-C1)
 
@@ -108,6 +109,14 @@
 - 2026-08-18：配套改动——占位注入由"恒失败"改为 `PlaceholderClipboardInjector`（仅写剪贴板返回 clipboardOnly 档，转写文字松手后即可手动粘贴，完整注入 Phase 8）；`Info.plist` 新增 `NSSpeechRecognitionUsageDescription`（Speech 兜底引入第四个 TCC 权限，§4.4 矩阵未列，首次使用弹窗）；设置页转写区新增当前引擎显示与模型下载进度/重试。
 - 2026-08-18：坑——@MainActor 类无法直接遵守 Sendable 协议（"conformance crosses into main actor-isolated code"），Router 改非隔离 + NSLock（use 主线程写/任意线程读）；`@Sendable` 闭包参数仍需显式 `@escaping`；WhisperKit 0.18 API：`WhisperKit(config:) async throws` + `loadModels()` + `transcribe(audioArray:)` + `static download(variant:downloadBase:useBackgroundSession:progressCallback:)`。
 - 2026-08-18：验证全绿——build 成功、test 108 用例通过（97 + 新增 11：引擎决策 4 / 下载状态机 6 / 路由器 1）。真实下载 ~500MB 模型、WhisperKit 转写质量、Speech 兜底识别、权限弹窗属真机手动验收项。
+- 2026-08-18：真机验收修复——huggingface.co 被墙致模型下载超时；源码核实 `WhisperKit.download` 的 `endpoint:` 参数支持自定义端点（HubApi 亦支持 HF_ENDPOINT 环境变量），落地官方 → hf-mirror.com 自动回退（`asr.modelRepoEndpoint` 键：auto/强制，无 UI）；swift-transformers Downloader 断点续传按本地路径记录、跨端点续传有效。
+- 2026-08-18：日志设施落地——`Pipeline/AppLog.swift`（os.Logger，subsystem=com.voxmit.app，按模块分 category）；状态机转换/录音开始结束/下载端点尝试与成败/引擎切换与激活/注入结果/权限降级等关键事件打点；注意字符串插值须标 `privacy: .public`（否则 Console 屏蔽为 \<private\>）；排查方法见 implementation-notes。单测 +7（115 总），build/test 全绿。
+- 2026-08-18：日志升级为产品级——门面化 `AppLog.info(.pipeline, "…")`（同时写 os_log 与内存环形缓冲 LogRingBuffer，保底本次会话诊断）；设置页新增「诊断」区「导出诊断日志…」（环境头 + 系统日志段 + 会话缓冲段，`Modules/Diagnostics/DiagnosticLogExporter.swift`）；日志规范（级别约定/隐私红线/打点原则）固化在 implementation-notes「日志设施」节。覆盖面补齐：HUD 显示隐藏、剪贴板写入成败、模型激活耗时、Speech 授权结果、转写耗时（仅元数据）。OSLogStore 本机三 scope 均不可用（logd 持久存储损坏，环境特例），导出自动降级内存缓冲段；单测 +11（126 总），build/test 全绿。
+- 2026-08-18：日志落盘（参照 DDFileLogger 思路自实现，无第三方依赖）——AppLog 门面三路同写（os_log/环形缓冲/文件，调用点不变）；`Modules/Diagnostics/LogFileStore.swift`：`~/Library/Application Support/Voxmit/Logs/voxmit-yyyy-MM-dd.log` 按日命名追加写，串行队列异步落盘不阻塞主线程，写盘失败熔断降级；保留最近 7 个文件且总量 ≤20MB（启动 + 跨天滚动时清理，当天文件无条件保留）；启动写分隔行。测试宿主（TEST_HOST）不写盘。诊断导出环境头注明日志目录。单测 +10（136 总），build/test 全绿。
+- 2026-08-18：真机验收修复两连——① 就绪误判卡死：残骸目录（首次官方端点超时遗留）被弱校验误判 ready → 幂等下载短路 → 激活失败永远 Speech；修法=`ModelFolderValidator.isReady`（变体目录需含完整产物集：`config.json` + `AudioEncoder/MelSpectrogram/TextDecoder.mlmodelc` 三个目录包）+ `ModelDownloadManager.markInvalidModel` 自愈（删除残骸目录强制干净重下 + 每会话自动重试一次，防循环闸；failed 态 resolve 落 speech 无死循环）。② 设置窗口不置顶（LSUIElement 经典坑）：SettingsView.onAppear 里 `NSApp.activate()`（macOS 14+ API）；权限自检页既有 makeKeyAndOrderFront+activate 无需改。单测 +10（146 总），build/test 全绿。
+- 2026-08-18：就绪误判修复不彻底再修（真机日志实锤：残骸含部分 .mlmodelc 仍被"≥1 个"校验放行）——校验升级为完整产物集缺一不可；`ModelDownloading` 协议新增 `removeInvalidModel()`（按名匹配变体目录，不做就绪校验，删失败不阻塞）；教训与修复链见 implementation-notes。测试修三处自身缺陷：跨天用例竞态（append 异步入队须先 flush 再推进时钟）、建文件前未建目录、并行测试共享 AppLog 环形缓冲致全局计数断言失效（改唯一标记定位）。单测 149 总，build/test 全绿。
+- 2026-08-18：真机日志再修两连——① Speech 兜底失败实因：系统级听写关闭（"Siri and Dictation are disabled"，运行时 AssistantServices 域，SDK 无公开错误码）→ `SpeechErrorMapper` 纯函数映射为可操作文案（系统设置 → 键盘 → 听写）；② nsurlsessiond 不可用（NSURLErrorDomain -997，与本机 logd 坏同源）→ 下载器端点循环内同端点先后台后前台回退一次（按错误码判定不匹配文案）；huggingface 超时属被墙正确行为不回退。单测 +6（155 总），build/test 全绿。
+- 2026-08-18：HUD 失败态长文案截断修复（面板一次性定尺寸 + 文案无换行约束所致；文案列宽上限 320 + lineLimit(3) + fixedSize(vertical:)，hosting controller 开 `sizingOptions = .preferredContentSize` + KVO 订阅随内容调整面板，`HUDLayout` 纯逻辑钳制防回环）。Speech 兜底中文识别修复：默认 locale 英文识别中文出胡话——新增 `asr.speechLocale` 键（默认 zh-CN，无 UI），`SpeechLocaleResolver` 纯解析；端侧语言资产缺失（听写语言列表未加中文）与不支持 locale 分别映射 `onDeviceLanguageMissing` / `localeUnsupported` 可操作文案；`requiresOnDeviceRecognition = true` 端侧口径不变。单测 +5（165 总），build/test 全绿。
 
 ### Phase 6: Prompt 润色 📋 (FR-D1, FR-D4)
 

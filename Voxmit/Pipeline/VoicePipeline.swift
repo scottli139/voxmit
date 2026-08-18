@@ -22,7 +22,16 @@ final class VoicePipeline: ObservableObject {
     // MARK: - 对外状态
 
     /// 当前主链路状态；迁移只允许由协调器内部发起
-    @Published private(set) var state: VoicePipelineState = .idle
+    @Published private(set) var state: VoicePipelineState = .idle {
+        didSet {
+            // 诊断打点：状态转换 debug（性能验收 Phase 9 也依赖 os_log）；失败原因 error 级
+            if case .failed(let reason) = self.state {
+                AppLog.error(.pipeline, "主链路失败：\(reason)")
+            } else {
+                AppLog.debug(.pipeline, "state: \(String(describing: oldValue)) → \(String(describing: self.state))")
+            }
+        }
+    }
 
     /// 当前权限快照，由 PermissionManager 实时同步（VoxmitAppDelegate 中 Combine 接线）。
     /// 降级决策数据源（需求文档 §4.4）：热键降级见 HotkeyManager，注入降级在 Phase 8 接线。
@@ -224,6 +233,7 @@ final class VoicePipeline: ObservableObject {
             try Task.checkCancellation()
             // HUD 反馈态数据源（Phase 4）：档位 + 是否实际润色（"未润色"角标）
             lastInjectionReport = InjectionReport(outcome: outcome, wasRefined: wasRefined)
+            AppLog.info(.injection, "注入结果：\(String(describing: outcome))，已润色=\(wasRefined)")
             switch outcome {
             case .failed(let reason):
                 finish(with: .failed(reason))

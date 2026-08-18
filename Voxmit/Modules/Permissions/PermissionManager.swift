@@ -185,11 +185,19 @@ final class PermissionManager: ObservableObject {
 
     /// 重新查询三项权限状态（检测 API 均不触发系统弹窗）
     func refresh() {
-        snapshot = PermissionSnapshot(
+        let newSnapshot = PermissionSnapshot(
             microphone: checker.microphoneAuthorizationStatus(),
             listenEventGranted: checker.preflightListenEventAccess(),
             accessibilityGranted: checker.isProcessTrusted()
         )
+        // 仅在变化时打点（自检页 1s 轮询，防刷屏）；缺失项即降级决策依据（§4.4）
+        if newSnapshot != snapshot {
+            let missing = newSnapshot.missingPermissions.map(\.displayName).joined(separator: "、")
+            AppLog.notice(.permissions, 
+                "权限快照变化：缺失 [\(missing)]（无缺失则为空）"
+            )
+        }
+        snapshot = newSnapshot
     }
 
     /// 请求麦克风授权（仅 notDetermined 时系统弹窗），完成后刷新快照

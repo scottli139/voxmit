@@ -25,7 +25,8 @@ struct VoxmitApp: App {
         Settings {
             SettingsView(
                 modelDownloadManager: appDelegate.modelDownloadManager,
-                transcriptionRouter: appDelegate.transcriptionRouter
+                transcriptionRouter: appDelegate.transcriptionRouter,
+                diagnosticExporter: appDelegate.diagnosticExporter
             )
         }
     }

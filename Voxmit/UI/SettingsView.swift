@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 设置页骨架（Phase 0）：分区对应需求文档 §9.2 设置项清单。
@@ -7,6 +8,8 @@ struct SettingsView: View {
     @ObservedObject var modelDownloadManager: ModelDownloadManager
     /// 当前生效引擎展示
     @ObservedObject var transcriptionRouter: TranscriptionEngineRouter
+    /// 诊断日志导出
+    let diagnosticExporter: DiagnosticLogExporter
     // 通用
     @AppStorage(SettingsKeys.appLaunchAtLogin) private var launchAtLogin = false
     // 热键
@@ -27,6 +30,8 @@ struct SettingsView: View {
     @State private var hasSavedAPIKey = KeychainHelper.readAPIKey() != nil
     /// 可用输入设备列表（每次打开设置页时查询）
     @State private var inputDevices: [InputDeviceInfo] = []
+    /// 诊断导出结果提示
+    @State private var exportResultMessage: String?
 
     /// 选择绑定：空串 ↔ nil（nil = 跟随系统默认设备）
     private var inputDeviceSelection: Binding<String> {
@@ -135,6 +140,7 @@ struct SettingsView: View {
                         if KeychainHelper.saveAPIKey(key) {
                             apiKeyInput = ""
                             hasSavedAPIKey = true
+                            AppLog.notice(.settings, "LLM API Key 已保存到 Keychain") // 不记录 Key 本体
                         }
                     }
                     .disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -149,22 +155,51 @@ struct SettingsView: View {
                 Toggle("粘贴后自动发送（Return）", isOn: $injectAutoSend)
                 Toggle("多行文本折叠为一行（CLI 目标）", isOn: $injectCollapseNewlines)
             }
+            Section("诊断") {
+                Button("导出诊断日志…") {
+                    Task {
+                        switch await diagnosticExporter.export() {
+                        case .saved(let url):
+                            exportResultMessage = "已导出：\(url.path)"
+                        case .cancelled:
+                            break // 用户取消，不提示
+                        case .failed(let reason):
+                            exportResultMessage = reason
+                        }
+                    }
+                }
+                .alert("导出诊断日志", isPresented: .constant(exportResultMessage != nil)) {
+                    Button("好") { exportResultMessage = nil }
+                } message: {
+                    Text(exportResultMessage ?? "")
+                }
+                Text("导出最近 24 小时的应用日志与环境信息快照，供问题排查；不含 API Key、转写内容等隐私数据。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 480, height: 500)
+        .onAppear {
+            // LSUIElement 经典坑：菜单栏打开 Settings 场景时 App 未激活，窗口可能藏在其他
+            // 窗口后面——内容出现时激活 App 使其成为 key window（macOS 14+ API）
+            NSApp.activate()
+        }
     }
 }
 
 #Preview {
-    // 预览用真实实例（init 无副作用：不下载、不识别）
+    // 预览用真实实例（init 无副作用：不下载、不识别、不导出）
     let speech = SpeechTranscriptionEngine()
-    return SettingsView(
+    SettingsView(
         modelDownloadManager: ModelDownloadManager(
             downloader: WhisperKitModelDownloader(
                 variantProvider: { "small" },
-                downloadBase: VoxmitAppDelegate.modelsDirectory
+                downloadBase: VoxmitAppDelegate.modelsDirectory,
+                endpointChain: { [.huggingface] }
             )
         ),
-        transcriptionRouter: TranscriptionEngineRouter(current: speech)
+        transcriptionRouter: TranscriptionEngineRouter(current: speech),
+        diagnosticExporter: DiagnosticLogExporter(permissionManager: PermissionManager())
     )
 }

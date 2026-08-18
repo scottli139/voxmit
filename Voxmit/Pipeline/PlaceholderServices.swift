@@ -30,11 +30,16 @@ struct NoOpPromptRefiner: PromptRefining {
 struct PlaceholderClipboardInjector: TextInjecting {
     func inject(text: String, into target: TargetSnapshot, autoSend: Bool) async -> InjectionOutcome {
         // NSPasteboard 约定主线程访问
-        await MainActor.run {
+        return await MainActor.run {
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            let ok = NSPasteboard.general.setString(text, forType: .string)
+            if ok {
+                AppLog.info(.injection, "已写入剪贴板（clipboardOnly 档，\(text.count) 字）")
+            } else {
+                AppLog.error(.injection, "剪贴板写入失败")
+            }
+            return ok ? .clipboardOnly : .failed("剪贴板写入失败")
         }
-        return .clipboardOnly
     }
 }
 

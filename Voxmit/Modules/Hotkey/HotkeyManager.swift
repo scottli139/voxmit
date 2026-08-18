@@ -192,6 +192,7 @@ final class HotkeyManager {
         if parser.isHotkeyPressed {
             onHotkeyUp?()
         }
+        AppLog.info(.hotkey, "热键切换：keyCode \(self.parser.hotkeyKeyCode) → \(newParser.hotkeyKeyCode)")
         parser = newParser
     }
 
@@ -221,6 +222,7 @@ final class HotkeyManager {
             callback: hotkeyEventTapCallback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
+            AppLog.error(.hotkey, "CGEventTap 创建失败（输入监控权限缺失？），菜单降级入口可用")
             return // 创建失败（如权限缺失）：保持停止，菜单降级入口可用
         }
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
@@ -230,6 +232,7 @@ final class HotkeyManager {
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        AppLog.info(.hotkey, "CGEventTap 已创建（热键 keyCode \(self.parser.hotkeyKeyCode)）")
         reconcileHotkeyState() // tap 重建后对账（启动/重建时机）
     }
 
@@ -283,6 +286,7 @@ final class HotkeyManager {
     private func reconcileHotkeyState() {
         let flags = CGEventSource.flagsState(.hidSystemState)
         if let action = parser.synced(withCurrentFlags: flags), action == .hotkeyUp {
+            AppLog.notice(.hotkey, "检测到 keyUp 丢失（按键状态卡死），已合成松手自愈")
             onHotkeyUp?()
         }
     }
@@ -297,6 +301,7 @@ final class HotkeyManager {
         case .tapDisabled:
             // event tap 被系统禁用（超时/用户输入）：立即恢复 + 巡检重建
             // （ensureTapAlive 末尾对账按键状态——禁用期间可能丢了 keyUp）
+            AppLog.notice(.hotkey, "event tap 被系统禁用（\(String(describing: type))），自动恢复")
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
             }

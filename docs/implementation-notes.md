@@ -31,6 +31,39 @@
 - **选型**：`CGEventSource.flagsState(.hidSystemState)` 读 HID 层物理修饰键状态，不受其他 App 合成事件影响；备选 `.combinedSessionState`（含会话级合成状态），若真机发现误纠正再评估切换。注意新版 SDK 中旧函数式 API `CGEventSourceFlagsState(_:)` 已改名 `CGEventSource.flagsState(_:)`。
 - **触发场景备忘**：热键冲突干扰、tap 临时禁用（系统负载/超时）、安全输入（密码框聚焦）。
 
+### 模型"已就绪"但永远 Speech 兜底（就绪误判卡死，2026-08-18 已修复）
+
+- **现象**：首次下载（官方端点超时）留下残骸目录后，设置页显示"模型已就绪"，但生效引擎永远是 Speech；第一次修复（≥1 个 `.mlmodelc` 校验）仍不彻底——残骸含部分 `.mlmodelc` 目录包（如只有 MelSpectrogram），照样放行，重启后循环复发（真机日志实锤 `AudioEncoder.mlmodelc` 缺失）。
+- **根因链**（三者叠加才成卡死，任一环节单独存在都不致命）：① 就绪校验太弱——校验强度必须与"激活成功的必要条件"对齐（完整产物集，缺一不可）；② `startDownloadIfNeeded()` 幂等 no-op——ready 态把镜像下载永远短路；③ 激活 `loadModels()` 加载残骸失败 → catch 保持 Speech。
+- **修复**：`ModelFolderValidator.isReady` 要求完整产物集（`config.json` + `AudioEncoder/MelSpectrogram/TextDecoder.mlmodelc` 三个目录包；whisperkit-coreml 全变体 tiny/small/large-v3 同构，写死）；`markInvalidModel` 自愈链——`ModelDownloading.removeInvalidModel()` 删除按名匹配的变体目录（不做就绪校验，残骸也要命中；删除失败不阻塞状态回退；不删不行，否则 Downloader 认为文件完整、重试拿同一坏文件）→ 打回 failed → **每会话自动重试下载一次**（`autoRetryUsed` 会话闸防循环，用尽后停 failed 等手动重试）。
+- **教训**：幂等短路（ready 不再下载）+ 弱校验 + 静默兜底（catch 只切换不反馈）三者叠加会藏死状态机；兜底路径必须有可见的状态回退出口，且"重试"必须拿到干净的输入（删除坏产物）。
+
+### 设置窗口不置顶（LSUIElement，2026-08-18 已修复）
+
+- **现象**：菜单栏点「设置…」后，设置窗口有时藏在其他窗口后面。
+- **根因**：LSUIElement App 打开 SwiftUI Settings 场景时 App 未激活，窗口不获焦点。
+- **修法**：`SettingsView.onAppear` 里 `NSApp.activate()`（macOS 14+ API；`activate(ignoringOtherApps:)` 已废弃）。权限自检页（AppKit 手动托管窗口）本就有 `makeKeyAndOrderFront` + `NSApp.activate()`，无此问题。
+
+### Speech 兜底失败：系统级听写关闭（2026-08-18 已修复）
+
+- **现象**：WhisperKit 模型未就绪时由 Speech 兜底，转写失败"Siri and Dictation are disabled"——语音识别权限已授权（authorized），但系统级"听写"被关闭（系统设置 → 键盘 → 听写）。
+- **根因**：`SFSpeechRecognizer` 端侧识别依赖系统听写服务；权限矩阵只管 TCC 授权，不管系统级开关。该错误来自运行时 AssistantServices（`kAFAssistantErrorDomain` 系），SDK 无公开错误码（`SFErrors.h` 不含此码）。
+- **修复**：`SpeechErrorMapper` 纯函数在识别错误出口映射——错误域含 "Assistant" 且文案含 "Dictation" → `SpeechEngineError.dictationDisabled`，用户可操作文案（HUD failed 态直接指引开启路径）；其余错误原样透传。
+- **教训**：兜底引擎的可用性 ≠ 权限授权；系统级服务开关（听写）也是依赖项，错误文案要给用户可操作的出口。
+
+### 模型下载 -997：后台传输服务不可用回退前台（2026-08-18 已修复）
+
+- **现象**：镜像端点下载失败"Lost connection to background transfer service"（NSURLErrorDomain -997 = `NSURLErrorBackgroundSessionWasDisconnected`）——本机 nsurlsessiond 不可用（与 logd 损坏同源的迁移机环境特例）。
+- **修复**：下载器端点循环内，单端点先后台 session（`useBackgroundSession: true`），捕获 -997（**按错误码判定，不匹配文案**；SDK 里常量名是 `NSURLErrorBackgroundSessionWasDisconnected`，Swift 侧 `NSURLErrorBackgroundSessionWasDisconnected` / `URLError.Code.backgroundSessionWasDisconnected` 均可用）后同端点前台 session 重试一次，打点注明会话类型；不影响端点间回退顺序；取消不回退。前台 session 的断点续传仍由 incomplete 文件机制保证，跨启动续传不受影响。
+- **注意**：-997 在这台机器是环境特例（nsurlsessiond 坏）；用户机器上罕见，但回退路径普适。
+
+### Speech 兜底识别中文出英文胡话（locale 与听写语言资产，2026-08-18 已修复）
+
+- **现象**：用户开启听写后说中文，Speech 兜底识别成英文胡话（"Hello hello hello"）——`SFSpeechRecognizer()` 无参初始化用了系统默认（英文）locale。
+- **修复**：`SFSpeechRecognizer(locale:)` 取设置键 `asr.speechLocale`（默认 `zh-CN`，本产品主场景中文口述+夹英文术语；WhisperKit 天然中英混识不受此限）；`SpeechLocaleResolver` 纯解析（空/空白回退 zh-CN；有效性由识别器初始化与端侧资产检查兜底）。
+- **端侧语言资产依赖**：zh-CN 端侧识别要求系统「听写 → 语言」里已添加中文（资产不在则 `supportsOnDeviceRecognition == false`）。两条边界分别映射可操作文案：`localeUnsupported`（`SFSpeechRecognizer(locale:)` 返回 nil）与 `onDeviceLanguageMissing`（端侧资产缺失）——均指引去 系统设置 → 键盘 → 听写，并注明等 WhisperKit 模型就绪即不受此限。`requiresOnDeviceRecognition = true` 不变（隐私口径：端侧优先，不走 Apple 服务器）。
+- **教训**：Speech 兜底三层依赖都要兜底文案——TCC 权限（授权弹窗）、系统听写开关、听写语言资产；locale 不写死英文是默认陷阱。
+
 ## 架构要点
 
 ### 权限自检（Phase 1，FR-G5）
@@ -81,6 +114,31 @@
 - **Swift 6 并发坑两则**：① @MainActor 类不能直接遵守继承了 Sendable 的协议（"conformance crosses into main actor-isolated code"）——Router 这类需要跨域读的持有器改非隔离类 + NSLock（写主线程断言、读任意线程）；② `@Sendable` 闭包参数仍须显式 `@escaping`（函数型参数默认非逃逸）。
 - Speech 兜底引擎引入**第四个 TCC 权限**（语音识别，`NSSpeechRecognitionUsageDescription` 已入 Info.plist）：`SFSpeechRecognizer.authorizationStatus()` notDetermined 时才请求；`requiresOnDeviceRecognition = true` 前查 `supportsOnDeviceRecognition`；识别回调可能多次返回，continuation 需单次 resume 保护 + 取消时映射 CancellationError（Pipeline 的 Esc 路径期望它）。
 - 占位注入改 `PlaceholderClipboardInjector`（仅写剪贴板返回 `.clipboardOnly`）：让转写文字在 Phase 6/8 之前即可手动粘贴使用；NSPasteboard 约定主线程访问（协议非隔离 async 会跳池线程，须 `await MainActor.run`）。
+- **HF 端点回退（2026-08-18 真机）**：huggingface.co 在国内网络不可达（curl 000）；`WhisperKit.download(variant:…, endpoint:)` 支持自定义端点（HubApi 构造参数 endpoint，另支持 `HF_ENDPOINT` 环境变量），无需 fork。落地：官方 → hf-mirror.com 自动回退（`asr.modelRepoEndpoint` 键：unset/auto=回退链，huggingface/hf-mirror=强制，无设置页 UI）；取消（CancellationError）不回退。断点续传跨端点有效：swift-transformers `Downloader` 的 incomplete 文件按**本地目标路径**记录（与域名无关）。LFS 重定向的 CDN 域名差异无碍（每个文件经端点入口重定向，续传以本地文件尺寸为准）。
+
+### 日志设施（2026-08-18，产品级）
+
+**用法**：打点一律走门面 `AppLog.info(.pipeline, "…")`（级别方法 + category 枚举），不要再新建 `Logger` 实例；门面同时写 os_log 与内存环形缓冲（`LogRingBuffer`，容量 2000，本次会话保底诊断）。
+
+**级别约定**（与 os_log 对齐）：
+
+| 级别 | 用途 |
+|---|---|
+| debug | 高频/进度类（电平、下载进度百分比等；默认不落诊断重点） |
+| info | 关键生命周期事件（录音开始/结束、转写完成、模型就绪、引擎切换、导出成功） |
+| notice | 降级/权限缺失等用户可感知但不致命（权限快照变化、设备回落、自愈、授权结果） |
+| error | 失败路径（下载失败、转写失败、注入失败、tap 创建失败） |
+| fault | 不应发生的不变量破坏 |
+
+**隐私红线**：禁止记录 API Key 等凭据；禁止记录转写文本/润色内容/剪贴板内容本体（只可记长度、耗时、成败）；音频数据只记时长/样本数；上下文快照默认记 App 名/bundleID，窗口标题只记长度或脱敏（可能含文件名/账号）。门面统一以 `privacy: .public` 写 os_log（允许入场的内容本就限为非敏感元数据），调用点无需再标注 privacy。
+
+**打点原则**：状态机转换、外部交互（网络/权限/系统 API）成败、用户操作（热键、设置变更）三类必须有；进度/电平等高频事件只允许 debug；每行日志应能独立读懂（带状态名/引擎名/端点/耗时 ms 等关键上下文）。
+
+**诊断导出**（设置页「诊断」区「导出诊断日志…」）：文件 = 环境头（App 版本/build、macOS、机型、关键设置快照、四项权限状态，不含凭据）+ 系统日志段（OSLogStore `.system` scope + subsystem 谓词，口径最近 24h 含历史进程）+ 本次会话内存缓冲段；每行格式 `时间 级别 [category] 消息`。**OSLogStore 实测结论（本机 macOS 26.6，环境特例）**：`.system` 与 `local()` 抛"invalid log archive"（internalCode 6）、`.currentProcessIdentifier` 抛 nilError——本机 logd 持久存储不可用（`log show` 同样报此错，仅 `log stream` 实时可用）；用户正常机器上 OSLogStore 可用，失败时导出自动降级为仅内存缓冲段并注明。`OSLogStore.local()` 文档注明需管理员账户，故不走该入口。
+
+**日志文件落盘**（2026-08-18，参照 DDFileLogger 思路自实现，无第三方依赖）：门面三路同写（os_log / 环形缓冲 / 文件，调用点不变）。路径 `~/Library/Application Support/Voxmit/Logs/voxmit-yyyy-MM-dd.log` 按日命名追加写；全部级别（含 debug）都落文件——用户无法改级别，现场分析需要。`LogFileStore`：所有 IO 在专用串行队列（utility QoS）异步执行，任意线程可写不阻塞主线程；写盘失败熔断降级（本会话停止文件写入，os_log/缓冲不受影响）；保留最近 7 个文件且总量 ≤ 20MB（启动与跨天滚动时清理；当天文件无条件保留；非 `voxmit-*.log` 命名的外来文件不参与清理）；每次启动写分隔行（版本/build/macOS）。测试宿主（TEST_HOST）不写盘，保持单测零磁盘副作用；`LogFileStore` 单测走临时目录 + MockClock（注意 append 异步入队，跨天用例需先 flush 再推进时钟；createFile 不自建父目录）。
+
+**排查命令**：`log show --predicate 'subsystem == "com.voxmit.app"' --last 1h`；实时 `log stream --predicate 'subsystem == "com.voxmit.app"'`；Console.app 过滤 subsystem。
 
 ## 评审期已确认的实现要点
 

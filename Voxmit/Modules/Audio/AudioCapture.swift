@@ -116,6 +116,7 @@ final class AudioCapture: AudioCapturing, @unchecked Sendable {
         self.watchdog = MaxDurationWatchdog(limit: maxDuration, clock: clock)
         self.inputDeviceUIDProvider = inputDeviceUIDProvider
         watchdog.onLimitReached = { [weak self] in
+            AppLog.notice(.audio, "已达最长录音时长（5 分钟）")
             self?.events.send(.maxDurationReached)
             self?.onMaxDurationReached?()
         }
@@ -138,19 +139,22 @@ final class AudioCapture: AudioCapturing, @unchecked Sendable {
 
         try beginCapture()
         watchdog.start()
+        AppLog.info(.audio, "录音开始")
     }
 
     func stop() -> [Float] {
         dispatchPrecondition(condition: .onQueue(.main))
         watchdog.stop()
         teardownCapture()
-        return lock.withLock {
+        let result = lock.withLock {
             defer {
                 samples.removeAll()
                 levelSampleCounter = 0
             }
             return samples
         }
+        AppLog.info(.audio, "录音结束，\(result.count) 样本（≈\(result.count / 16000) 秒）")
+        return result
     }
 
     func cancel() {
@@ -161,6 +165,7 @@ final class AudioCapture: AudioCapturing, @unchecked Sendable {
             samples.removeAll()
             levelSampleCounter = 0
         }
+        AppLog.debug(.audio, "录音取消（丢弃缓冲）")
     }
 
     // MARK: - engine 生命周期（主线程）
@@ -194,6 +199,7 @@ final class AudioCapture: AudioCapturing, @unchecked Sendable {
             )
         }
         if resolution.fellBackToDefault {
+            AppLog.notice(.audio, "指定输入设备已断开，回落系统默认")
             events.send(.inputDeviceFellBackToDefault)
         }
 
@@ -240,11 +246,13 @@ final class AudioCapture: AudioCapturing, @unchecked Sendable {
     private func handleConfigurationChange() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard engine != nil else { return }
+        AppLog.info(.audio, "音频设备配置变更，重建采集链路续录")
         teardownCapture()
         do {
             try beginCapture()
         } catch {
             // 重建失败（如输入设备已全部断开）：发布中断事件，已录部分保留（§4.2.2）
+            AppLog.error(.audio, "采集链路重建失败：\(error.localizedDescription)")
             events.send(.captureInterrupted)
         }
     }
