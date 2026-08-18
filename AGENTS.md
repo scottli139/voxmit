@@ -6,7 +6,7 @@
 
 **Phase 0 工程脚手架、Phase 1 权限自检与引导（FR-G5）已完成（2026-08-17）：Xcode 工程可构建、可测试；热键/音频/转写/润色/注入等功能模块尚未实现，从 Phase 2 起按 `PLAN.md` 推进。**
 
-- 需求文档 `语音编程工具-需求分析与方案说明.md`（v0.4，2026-08-18；§8 开放问题已全部决策，定名 Voxmit）是需求与方案的唯一事实来源。
+- 需求文档 `语音编程工具-需求分析与方案说明.md`（v0.6，2026-08-18；§8 开放问题已全部决策，定名 Voxmit）是需求与方案的唯一事实来源。
 - 仓库：https://github.com/scottli139/voxmit（Private，2026-08-17 创建）。
 - 构建与测试命令（CI 尚未建立，本地执行）：
   - `xcodebuild build -scheme Voxmit -destination 'platform=macOS'`
