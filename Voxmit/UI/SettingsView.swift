@@ -5,6 +5,8 @@ import SwiftUI
 struct SettingsView: View {
     // 通用
     @AppStorage(SettingsKeys.appLaunchAtLogin) private var launchAtLogin = false
+    // 热键
+    @AppStorage(SettingsKeys.hotkeyKeyCode) private var hotkeyKeyCode = 0x3D
     // 转写
     @AppStorage(SettingsKeys.asrEngine) private var asrEngine = "whisperkit"
     @AppStorage(SettingsKeys.asrModelVariant) private var asrModelVariant = "small"
@@ -35,6 +37,23 @@ struct SettingsView: View {
             Section("通用") {
                 // SMAppService.mainApp 接线在后续 Phase 实现（FR-G1），此处仅保存开关值
                 Toggle("登录时启动", isOn: $launchAtLogin)
+            }
+            Section("热键") {
+                // FR-B2 的 MVP 版：预设四档，改动即时生效（HotkeyManager 监听 hotkey.keyCode）
+                Picker("按住说话的热键", selection: $hotkeyKeyCode) {
+                    ForEach(HotkeyPreset.allCases, id: \.keyCode) { preset in
+                        Text(preset.displayName).tag(Int(preset.keyCode))
+                    }
+                }
+                if hotkeyKeyCode == Int(HotkeyPreset.rightShift.keyCode) {
+                    // 热键与旁路修饰键同为 Shift：旁路判定自动禁用，避免每次录音都跳过润色
+                    Text("热键为右 Shift 时，旁路修饰键（Shift）判定自动禁用")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                Text("与其他 App 快捷键冲突时可在此更换；完整自定义录入（任意组合键）将在 V1.1 提供")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("音频") {
                 Picker("输入设备", selection: inputDeviceSelection) {

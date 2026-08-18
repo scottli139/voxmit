@@ -14,6 +14,37 @@ enum HotkeyAction: Equatable {
     case tapDisabled
 }
 
+/// 预设热键（FR-B2 的 MVP 版：四档预设即时生效；完整自定义录入留 V1.1）。
+/// rawValue 即 keyCode；default 仍为右 Option。
+enum HotkeyPreset: Int64, CaseIterable, Sendable {
+    case rightOption = 0x3D
+    case rightCommand = 0x36
+    case rightShift = 0x3C
+    case fn = 0x3F // Fn / Globe
+
+    var keyCode: Int64 { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .rightOption: return "右 Option"
+        case .rightCommand: return "右 Command"
+        case .rightShift: return "右 Shift"
+        case .fn: return "Fn（Globe）"
+        }
+    }
+
+    /// 该键的 flagsChanged 判定修饰位
+    var flag: CGEventFlags {
+        // HotkeyEventParser.eventFlag 覆盖全部四档，强制解包安全
+        HotkeyEventParser.eventFlag(forModifierKeyCode: Int(keyCode))!
+    }
+
+    /// 由 keyCode 解析预设；未知值回退右 Option（设置页只写预设值，此为防御）
+    init(keyCode: Int64) {
+        self = HotkeyPreset(rawValue: keyCode) ?? .rightOption
+    }
+}
+
 /// CGEvent 流 → 热键语义事件的纯解析器（§4.2.1）。
 /// 无系统依赖，单测直接喂合成事件序列覆盖全部分支。
 struct HotkeyEventParser {
@@ -27,14 +58,21 @@ struct HotkeyEventParser {
 
     private(set) var isHotkeyPressed = false
 
+    /// 热键对应的修饰位（检测与对账共用同一来源，保证判定一致；
+    /// 默认右 Option → .maskAlternate——左右 Option 合并位，任一 Option 按住均置位）
+    var hotkeyFlag: CGEventFlags {
+        Self.eventFlag(forModifierKeyCode: Int(hotkeyKeyCode)) ?? .maskAlternate
+    }
+
     /// 修饰键 keyCode → CGEventFlags 映射（仅修饰键有 flagsChanged 按住/松开语义；
-    /// 普通组合键的自定义属 FR-B2，P1，届时改监听 keyDown）
+    /// 普通组合键的自定义属 FR-B2 完整自定义，V1.1，届时改监听 keyDown）
     static func eventFlag(forModifierKeyCode keyCode: Int) -> CGEventFlags? {
         switch keyCode {
         case 0x38, 0x3C: return .maskShift       // 左/右 Shift
         case 0x3B, 0x3E: return .maskControl     // 左/右 Control
         case 0x3A, 0x3D: return .maskAlternate   // 左/右 Option
         case 0x37, 0x36: return .maskCommand     // 左/右 Command
+        case 0x3F: return .maskSecondaryFn       // Fn / Globe
         default: return nil
         }
     }
@@ -49,16 +87,41 @@ struct HotkeyEventParser {
             return .tapDisabled
         case .flagsChanged where keyCode == hotkeyKeyCode:
             // 右 Option 判定（§3.4.2）：Alternate 置位 → 按下，清除 → 松开；只在沿变化时产出事件
-            let pressed = flags.contains(.maskAlternate)
+            let pressed = flags.contains(hotkeyFlag)
             guard pressed != isHotkeyPressed else { return nil }
             isHotkeyPressed = pressed
-            // 按住期间其他修饰键变化不影响录音（§3.4.2）；旁路只在 keyDown 瞬间判定（FR-D4）
-            return pressed ? .hotkeyDown(bypassActive: flags.contains(bypassModifierFlag)) : .hotkeyUp
+            // 按住期间其他修饰键变化不影响录音（§3.4.2）；旁路只在 keyDown 瞬间判定（FR-D4）。
+            // 热键与旁路同修饰位（如右 Shift 热键 + Shift 旁路）时旁路恒假——
+            // 否则 keyDown 恒含该位、每次录音都跳过润色（旁路自定义属 V1.1）
+            let bypassActive = hotkeyFlag == bypassModifierFlag
+                ? false
+                : flags.contains(bypassModifierFlag)
+            return pressed ? .hotkeyDown(bypassActive: bypassActive) : .hotkeyUp
         case .keyDown where keyCode == Self.escapeKeyCode:
             return .escape
         default:
             return nil
         }
+    }
+
+    /// 状态对账（真机 bug 修复）：keyUp 事件可能丢失（tap 被系统临时禁用、安全输入期、
+    /// 其他 App 热键冲突干扰），解析器随后卡在 pressed=true，后续每次按下都被判为重复事件丢弃。
+    ///
+    /// 保守原则：只纠正"卡死的 pressed=true"——解析器认为按着、真实修饰位已清除时，
+    /// 合成一次 hotkeyUp（走正常松手通道，Pipeline 状态机保持一致）；反向不一致
+    /// （真实按着而解析器漏了 keyDown）只重置状态、不发事件（避免意外触发录音）。
+    ///
+    /// maskAlternate 为左右 Option 合并位：flag 已清除 ⇒ 热键必已松开，对账安全。
+    mutating func synced(withCurrentFlags flags: CGEventFlags) -> HotkeyAction? {
+        let actuallyPressed = flags.contains(hotkeyFlag)
+        if isHotkeyPressed, !actuallyPressed {
+            isHotkeyPressed = false
+            return .hotkeyUp
+        }
+        if !isHotkeyPressed, actuallyPressed {
+            isHotkeyPressed = true // 只重置，不发事件
+        }
+        return nil
     }
 }
 
@@ -72,23 +135,18 @@ final class HotkeyManager {
     var onEscape: (() -> Void)?
 
     private let permissionManager: PermissionManager
-    private var parser: HotkeyEventParser
+    private let defaults: UserDefaults
+    private(set) var parser: HotkeyEventParser
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var watchdog: Timer?
     private var permissionCancellable: AnyCancellable?
+    private var defaultsObserver: (any NSObjectProtocol)?
 
     init(permissionManager: PermissionManager, defaults: UserDefaults = .standard) {
         self.permissionManager = permissionManager
-        // 依赖 SettingsKeys.registerDefaults 已注册（App 启动时），缺省回退右 Option + Shift
-        let hotkeyKeyCode = defaults.object(forKey: SettingsKeys.hotkeyKeyCode) == nil
-            ? Int64(0x3D)
-            : Int64(defaults.integer(forKey: SettingsKeys.hotkeyKeyCode))
-        let bypassKeyCode = defaults.integer(forKey: SettingsKeys.hotkeyBypassModifier)
-        self.parser = HotkeyEventParser(
-            hotkeyKeyCode: hotkeyKeyCode,
-            bypassModifierFlag: HotkeyEventParser.eventFlag(forModifierKeyCode: bypassKeyCode) ?? .maskShift
-        )
+        self.defaults = defaults
+        self.parser = Self.makeParser(defaults: defaults)
 
         // 权限驱动启停（§4.4）：无输入监控权限不创建 tap（菜单降级入口可用）；
         // 权限补齐后（PermissionManager refresh 推送快照）动态开启
@@ -101,6 +159,40 @@ final class HotkeyManager {
                 }
             }
         }
+
+        // 热键预设即时生效（FR-B2 的 MVP 版）：hotkey.keyCode 变化时热替换解析参数，
+        // tap 事件流不动
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: defaults,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.applyHotkeyConfiguration() }
+        }
+    }
+
+    /// 由设置构建解析器（热键预设 + 旁路修饰键；依赖 SettingsKeys.registerDefaults 已注册）
+    private static func makeParser(defaults: UserDefaults) -> HotkeyEventParser {
+        let preset = defaults.object(forKey: SettingsKeys.hotkeyKeyCode) == nil
+            ? HotkeyPreset.rightOption
+            : HotkeyPreset(keyCode: Int64(defaults.integer(forKey: SettingsKeys.hotkeyKeyCode)))
+        let bypassKeyCode = defaults.integer(forKey: SettingsKeys.hotkeyBypassModifier)
+        return HotkeyEventParser(
+            hotkeyKeyCode: preset.keyCode,
+            bypassModifierFlag: HotkeyEventParser.eventFlag(forModifierKeyCode: bypassKeyCode) ?? .maskShift
+        )
+    }
+
+    /// 热键切换热替换：仅换解析参数（keyCode/旁路位），tap 事件流不变。
+    /// 旧键若仍标记为按下（跨键残留），先合成一次松手让 Pipeline 走正常流程归位，
+    /// 再换新解析器（新实例即状态复位，isHotkeyPressed = false）
+    private func applyHotkeyConfiguration() {
+        let newParser = Self.makeParser(defaults: defaults)
+        guard newParser.hotkeyKeyCode != parser.hotkeyKeyCode else { return }
+        if parser.isHotkeyPressed {
+            onHotkeyUp?()
+        }
+        parser = newParser
     }
 
     /// 启动监听（幂等；无输入监控权限时不创建 tap）
@@ -138,6 +230,7 @@ final class HotkeyManager {
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        reconcileHotkeyState() // tap 重建后对账（启动/重建时机）
     }
 
     private func teardownTap() {
@@ -151,7 +244,8 @@ final class HotkeyManager {
         }
     }
 
-    /// tap 自愈（§4.2.1 健壮性）：被系统禁用则重新 enable；RunLoop source 失效则整体重建
+    /// tap 自愈（§4.2.1 健壮性）：被系统禁用则重新 enable；RunLoop source 失效则整体重建；
+    /// 末尾对账按键状态（看门狗巡检时机）
     private func ensureTapAlive() {
         guard permissionManager.snapshot.canUseGlobalHotkey else { return }
         if let tap = eventTap, !CGEvent.tapIsEnabled(tap: tap) {
@@ -161,8 +255,10 @@ final class HotkeyManager {
             teardownTap()
         }
         if eventTap == nil {
-            setupTap()
+            setupTap() // 内部末尾已对账（重建时机）
+            return
         }
+        reconcileHotkeyState()
     }
 
     /// 看门狗：source 失效后不再有任何回调，只能周期性巡检（5s 间隔，空闲开销可忽略）
@@ -178,6 +274,19 @@ final class HotkeyManager {
         watchdog = nil
     }
 
+    /// 按键状态对账（真机 bug 修复：keyUp 丢失导致解析器卡死 pressed=true）。
+    /// 读取修饰键真实状态，只纠正"卡死的 pressed=true"（合成 hotkeyUp 走正常松手通道），
+    /// 反向不一致只重置不发事件——判定细节见 HotkeyEventParser.synced 注释。
+    ///
+    /// 选型：`hidSystemState` 读 HID 层物理修饰键状态，不受其他 App 合成事件影响；
+    /// 备选 `.combinedSessionState`（含会话级合成状态），若真机发现误纠正再评估切换。
+    private func reconcileHotkeyState() {
+        let flags = CGEventSource.flagsState(.hidSystemState)
+        if let action = parser.synced(withCurrentFlags: flags), action == .hotkeyUp {
+            onHotkeyUp?()
+        }
+    }
+
     // MARK: - 事件处理
 
     /// 处理 tap 事件（参数已在 C 回调中提取，CGEvent 非 Sendable 不跨隔离域传递）；
@@ -187,6 +296,7 @@ final class HotkeyManager {
         switch action {
         case .tapDisabled:
             // event tap 被系统禁用（超时/用户输入）：立即恢复 + 巡检重建
+            // （ensureTapAlive 末尾对账按键状态——禁用期间可能丢了 keyUp）
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
             }

@@ -23,6 +23,14 @@
 - 应对（实测有效）：系统设置中 "−" 移除 Voxmit → `tccutil reset Accessibility com.voxmit.app` → 手动 "+" 重新添加当前构建并打开开关（必要时重启 App）。
 - 开发期注意：重新构建会改变 cdhash，辅助功能授权可能需重做上述步骤；根治靠稳定签名身份——开发期可用 Xcode 登录个人 Apple ID 的 "Apple Development" 证书，发布构建走 Developer ID + 公证（需求文档 §4.4）。
 
+### 热键 keyUp 丢失导致永久失效（2026-08-18 已修复）
+
+- **现象**：与其他 App 的热键冲突干扰（真机案例：微信语音输入快捷键）后，右 Option 永久失效（按住不再出现录音 HUD），重启 App 才恢复。
+- **根因**：`HotkeyEventParser.isHotkeyPressed` 只在收到该键 flagsChanged 事件时翻转；keyUp 丢失（tap 被系统临时禁用 / 安全输入期 / 他 App 干扰）后解析器永久停在 pressed=true，后续每次按下都被"沿变化"判定为重复事件丢弃；看门狗只查 tap/RunLoop source 活性，不对账按键状态，无法自愈。
+- **修复**：parser 新增纯方法 `synced(withCurrentFlags:)`，`HotkeyManager.reconcileHotkeyState()` 在三个时机读真实修饰键状态对账（看门狗巡检 5s / tapDisabled 恢复后 / tap 重建后）；保守原则——只纠正"卡死的 pressed=true"（合成一次 hotkeyUp 走正常松手通道，Pipeline 状态机保持一致），反向不一致（漏 keyDown）只重置状态不发事件（避免意外触发录音）。检测与对账共用 `hotkeyFlag`（keyCode → CGEventFlags 映射）保证判定一致。
+- **选型**：`CGEventSource.flagsState(.hidSystemState)` 读 HID 层物理修饰键状态，不受其他 App 合成事件影响；备选 `.combinedSessionState`（含会话级合成状态），若真机发现误纠正再评估切换。注意新版 SDK 中旧函数式 API `CGEventSourceFlagsState(_:)` 已改名 `CGEventSource.flagsState(_:)`。
+- **触发场景备忘**：热键冲突干扰、tap 临时禁用（系统负载/超时）、安全输入（密码框聚焦）。
+
 ## 架构要点
 
 ### 权限自检（Phase 1，FR-G5）
@@ -47,6 +55,8 @@
 - tap 自愈（§4.2.1）：回调内收到 `tapDisabledByTimeout/UserInput` 立即 `CGEvent.tapEnable`；RunLoop source 失效后不会再有回调，另加 5s 看门狗 Timer 巡检（`CGEvent.tapIsEnabled` / `CFRunLoopSourceIsValid`，失效整体重建）。
 - 权限驱动启停：HotkeyManager 订阅 `PermissionManager.$snapshot`，`canUseGlobalHotkey` 变化即 start/stop——权限补齐后热键自动生效，撤销后自动停止（菜单降级入口接管）。
 - 环境坑（本机）：DerivedData 在外置盘上，一旦有测试失败，Swift Testing 的进程内符号化（CoreSymbolication 逐个读二进制）会卡数分钟呈"假死"状（sample 可见 `issueRecorded → CSSymbolicatorCreate…`）；排查时先让输出可流式观察：`script -q /dev/null xcodebuild test …`（分配 pty，行缓冲；注意只能整条命令后台化使用，前台直接跑会因当前 shell 无 tty 报 `tcgetattr: Operation not supported`）。
+- 预设热键热替换（FR-B2 的 MVP 版，2026-08-18）：`HotkeyPreset` 四档（rawValue=keyCode）；Fn/Globe 0x3F → `.maskSecondaryFn`；HotkeyManager 监听 `UserDefaults.didChangeNotification`（自定义 suite 的 set 也会发，object 为该实例）重建 parser，tap 事件流不动；切换时旧键 pressed 残留先合成一次 hotkeyUp 让 Pipeline 归位，再换新 parser（新实例即状态复位）；热键与旁路同修饰位时（右 Shift 热键 + Shift 旁路）旁路判定恒假，否则 keyDown 恒含该位、每次录音都跳过润色。
+- Fn 键注意：系统设置「按下 Fn 键以…」若绑定切换输入法等动作，系统行为与我们的监听并存（预期单击 Fn 仍产 flagsChanged；听写为双击手势不冲突）——真机验收确认。
 
 ### 音频采集（Phase 3，FR-A1/A2/A3）
 

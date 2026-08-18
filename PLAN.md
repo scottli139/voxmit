@@ -64,6 +64,8 @@
 - 2026-08-17：坑（测试基建，详见 implementation-notes）——① 非隔离异步协议方法跑在协作线程池，MockClock 裸字典被主线程 cancel 与池线程注册并发踩踏致 SIGSEGV，mock 内部状态必须加锁；② Date 以 2001 纪元存秒（大基数 Double 误差 ~1e-7），"恰好 300ms"边界断言不可行，改 ±1ms 逼近；③ 虚拟时钟 sleep 必须锚定 keyDown 绝对时刻（任务调度晚于 advance 的竞态）；④ 异步链路等待用"主 Actor 探针×N"（FIFO 确定），不用定长 sleep。
 - 2026-08-17：环境坑——本机 DerivedData 在外置盘，一旦有测试失败，Swift Testing 的进程内符号化（CoreSymbolication 读二进制）会卡数分钟呈假死状；`script -q /dev/null xcodebuild ...` 给 pty 让输出行缓冲可实时观察。
 - 2026-08-17：验证全绿——build 成功、test 42 用例通过（Phase 0/1 的 18 + 新增 24：状态机 17 + 热键解析器 7）。真实右 Option 按住/松开、Esc、tap 被系统回收后的恢复属真机手动验收项。
+- 2026-08-18：真机 bug 修复——keyUp 丢失（热键冲突干扰/tap 临时禁用/安全输入）导致解析器卡死 pressed=true、热键永久失效需重启 App；新增状态对账自愈（`HotkeyEventParser.synced(withCurrentFlags:)` + 看门狗/tapDisabled 恢复/tap 重建三时机，`CGEventSource.flagsState(.hidSystemState)` 读真实修饰位，保守只合成 hotkeyUp、反向只重置不发事件）；检测与对账共用 `hotkeyFlag`。build/test 全绿（90 用例，解析器 +4）；真机复现验证见 docs/implementation-notes.md 已知问题条目。
+- 2026-08-18：FR-B2 最小可用版提前落地 MVP（动机：右 Option 与微信语音输入快捷键冲突，真机实测）——`HotkeyPreset` 预设四档（右 Option 0x3D / 右 Command 0x36 / 右 Shift 0x3C / Fn 0x3F，`eventFlag` 补 `.maskSecondaryFn` 映射）；设置页新增热键预设 Picker；HotkeyManager 监听 `UserDefaults.didChangeNotification` 热替换解析参数（tap 事件流不动，旧键 pressed 残留先合成 hotkeyUp 归位）；热键与旁路同修饰位（右 Shift + Shift 旁路）时旁路自动禁用；完整自定义录入仍留 V1.1。单测 +7（97 总），build/test 全绿。
 
 ### Phase 3: 音频采集 ✅ (FR-A1, FR-A2, FR-A3)
 
