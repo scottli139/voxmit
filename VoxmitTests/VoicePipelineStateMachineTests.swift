@@ -287,6 +287,61 @@ struct VoicePipelineStateMachineTests {
         #expect(!f.recorder.names.contains("failed"))
     }
 
+    // MARK: - 注入报告（HUD 反馈态数据源，Phase 4）
+
+    @Test func fullChain_setsInjectionReportAndPublishesTarget() async {
+        let f = Fixture()
+        await enterRecording(f)
+
+        f.clock.advance(by: 0.4)
+        f.pipeline.handleHotkeyUp()
+        await settlePipeline()
+        await settlePipeline()
+
+        #expect(f.pipeline.lastInjectionReport == InjectionReport(outcome: .pasted, wasRefined: true))
+        #expect(f.pipeline.targetSnapshot?.bundleID == "com.apple.Terminal")
+    }
+
+    @Test func bypassModifier_reportMarksUnrefined() async {
+        let f = Fixture()
+        await enterRecording(f, bypass: true)
+
+        f.clock.advance(by: 0.4)
+        f.pipeline.handleHotkeyUp()
+        await settlePipeline()
+        await settlePipeline()
+
+        #expect(f.pipeline.lastInjectionReport?.outcome == .pasted)
+        #expect(f.pipeline.lastInjectionReport?.wasRefined == false)
+    }
+
+    @Test func injectionFailure_reportCarriesFailure() async {
+        let f = Fixture()
+        f.injector.outcome = .failed("目标不可注入")
+        await enterRecording(f)
+
+        f.clock.advance(by: 0.4)
+        f.pipeline.handleHotkeyUp()
+        await settlePipeline()
+        await settlePipeline()
+
+        #expect(f.pipeline.lastInjectionReport?.outcome == .failed("目标不可注入"))
+    }
+
+    @Test func newRecording_clearsInjectionReport() async {
+        let f = Fixture()
+        await enterRecording(f)
+        f.clock.advance(by: 0.4)
+        f.pipeline.handleHotkeyUp()
+        await settlePipeline()
+        await settlePipeline()
+        #expect(f.pipeline.lastInjectionReport != nil)
+
+        f.pipeline.handleHotkeyDown(bypassModifierActive: false)
+
+        #expect(f.pipeline.lastInjectionReport == nil)
+    }
+
     // MARK: - 入口等价性与预留接口
 
     @Test func maxRecordingDuration_routesToReleaseFlow() async {

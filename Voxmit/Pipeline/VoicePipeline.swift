@@ -58,8 +58,11 @@ final class VoicePipeline: ObservableObject {
     private var processingTask: Task<Void, Never>?
     /// 本次是否跳过润色（FR-D4：keyDown 瞬间旁路修饰键处于按下）
     private var skipRefinement = false
-    /// keyDown 瞬间的注入目标快照（§3.4.3）
-    private var targetSnapshot: TargetSnapshot?
+    /// keyDown 瞬间的注入目标快照（§3.4.3；Phase 7 实装真实采集，当前为占位数据）
+    @Published private(set) var targetSnapshot: TargetSnapshot?
+
+    /// 最近一次注入的结果摘要（HUD 反馈态显示用，Phase 4）；下次 keyDown 时清空
+    @Published private(set) var lastInjectionReport: InjectionReport?
 
     init(
         clock: any PipelineClock = SystemPipelineClock(),
@@ -90,6 +93,7 @@ final class VoicePipeline: ObservableObject {
         }
         // 按下瞬间：快照注入目标（§3.4.3）并立即开始采集（§4.3，避免丢失开头百毫秒语音）
         targetSnapshot = contextCollector.snapshotTarget()
+        lastInjectionReport = nil
         skipRefinement = bypassModifierActive
         do {
             try audio.start()
@@ -202,19 +206,24 @@ final class VoicePipeline: ObservableObject {
             }
 
             let finalText: String
+            var wasRefined = false
             if skipRefinement {
                 finalText = raw // FR-D4 旁路：跳过润色，直接注入原始转写
             } else {
                 state = .refining
                 // AppCategory 分类表在 Phase 7 实装，当前固定 .other
                 let context = VoiceContext(target: target, appCategory: .other, selectedText: nil, cliSession: nil)
-                finalText = await refiner.refine(raw: raw, context: context).text
+                let result = await refiner.refine(raw: raw, context: context)
+                finalText = result.text
+                wasRefined = result.refined
                 try Task.checkCancellation()
             }
 
             state = .injecting
             let outcome = await injector.inject(text: finalText, into: target, autoSend: autoSendProvider())
             try Task.checkCancellation()
+            // HUD 反馈态数据源（Phase 4）：档位 + 是否实际润色（"未润色"角标）
+            lastInjectionReport = InjectionReport(outcome: outcome, wasRefined: wasRefined)
             switch outcome {
             case .failed(let reason):
                 finish(with: .failed(reason))

@@ -61,11 +61,18 @@ protocol TextInjecting: Sendable {
 }
 
 /// 注入结果档位
-enum InjectionOutcome: Sendable {
+enum InjectionOutcome: Sendable, Equatable {
     case pasted           // Cmd+V 成功
     case axWritten        // AX 写入成功（P1）
     case clipboardOnly    // 降级：仅剪贴板
     case failed(String)
+}
+
+/// 一次注入的结果摘要（HUD 反馈态显示用，Phase 4）
+struct InjectionReport: Sendable, Equatable {
+    let outcome: InjectionOutcome
+    /// 本次是否实际经过润色（false = 回退原文/旁路，HUD 角标"未润色"）
+    let wasRefined: Bool
 }
 
 /// 音频采集（Phase 3 实装 AVAudioEngine，需求文档 §4.2.2）

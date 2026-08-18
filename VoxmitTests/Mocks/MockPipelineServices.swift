@@ -112,6 +112,8 @@ final class MockTranscriptionEngine: TranscriptionEngine, @unchecked Sendable {
 /// 润色 mock
 final class MockRefiner: PromptRefining, @unchecked Sendable {
     var refinedText = "润色后的工程 Prompt"
+    /// 返回值的 refined 标记（false 模拟回退原文，供"未润色"角标语义测试）
+    var refinedFlag = true
 
     private(set) var callCount = 0
     private(set) var receivedRaw: String?
@@ -121,7 +123,7 @@ final class MockRefiner: PromptRefining, @unchecked Sendable {
         callCount += 1
         receivedRaw = raw
         receivedContext = context
-        return (refinedText, true)
+        return (refinedText, refinedFlag)
     }
 }
 

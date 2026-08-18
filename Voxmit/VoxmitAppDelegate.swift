@@ -27,6 +27,9 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
     /// 全局热键（FR-B1/FR-B5）；按输入监控权限自动启停，无权限时菜单降级入口可用
     private lazy var hotkeyManager = HotkeyManager(permissionManager: permissionManager)
 
+    /// 录音 HUD（Phase 4）：非激活面板，不抢焦点；多 Space/全屏可见
+    private lazy var hudController = RecordingHUDController(pipeline: pipeline, audioCapture: audioCapture)
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 单测以 App 为宿主运行（TEST_HOST）：不弹引导窗口、不做权限同步接线，
         // 保证测试不依赖真实权限状态（docs/TESTING.md）
@@ -51,6 +54,9 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
         audioCapture.onMaxDurationReached = { [pipeline] in
             Task { @MainActor in pipeline.handleMaxRecordingDuration() }
         }
+
+        // 录音 HUD：订阅状态机与电平，自动出现/隐藏
+        _ = hudController
 
         // 首次启动且权限未集齐 → 自动展示权限自检页（§4.4：麦克风 → 输入监控 → 辅助功能）
         let completed = UserDefaults.standard.bool(forKey: SettingsKeys.appOnboardingCompleted)
