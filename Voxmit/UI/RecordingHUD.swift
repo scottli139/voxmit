@@ -308,7 +308,9 @@ final class RecordingHUDController {
         let panel = ensurePanel()
         positionBottomCenter(panel)
         panel.alphaValue = 1
-        panel.orderFront(nil) // 非激活面板：不 makeKey、不 activate，焦点留在目标 App
+        // 非激活面板：不 makeKey、不 activate，焦点留在目标 App；
+        // 用 orderFrontRegardless——LSUIElement App 未激活时 orderFront 可能不生效（真机实测坑）
+        panel.orderFrontRegardless()
     }
 
     private func scheduleHide(after delay: TimeInterval) {
@@ -350,6 +352,8 @@ final class RecordingHUDController {
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.level = .floating
+        // 本 App 失活（切到其他 App）时不被系统隐藏——菜单栏 App 录音时焦点必然在别的 App
+        panel.hidesOnDeactivate = false
         // 全屏终端与多 Space 可见（§3.4.3）
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         self.panel = panel
@@ -358,7 +362,8 @@ final class RecordingHUDController {
 
     /// 位置：主屏可见区域底部居中（避开 Dock；VoiceInk 惯例，简单可靠）
     private func positionBottomCenter(_ panel: NSPanel) {
-        guard let screen = NSScreen.main else { return }
+        // LSUIElement App 无键盘焦点窗口时 NSScreen.main 可能为 nil，回退首块屏
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let fitting = panel.contentViewController?.preferredContentSize
             ?? NSSize(width: 240, height: 56)
         let size = NSSize(width: min(max(fitting.width, 160), 520), height: max(fitting.height, 44))
