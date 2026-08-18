@@ -4,7 +4,7 @@
 
 ## 1. 项目现状（重要）
 
-**Phase 0 工程脚手架已完成（2026-08-17）：Xcode 工程可构建、可测试；功能模块（热键/音频/转写/润色/注入等）尚未实现，从 Phase 1 起按 `PLAN.md` 推进。**
+**Phase 0 工程脚手架、Phase 1 权限自检与引导（FR-G5）已完成（2026-08-17）：Xcode 工程可构建、可测试；热键/音频/转写/润色/注入等功能模块尚未实现，从 Phase 2 起按 `PLAN.md` 推进。**
 
 - 需求文档 `语音编程工具-需求分析与方案说明.md`（v0.3，2026-08-17；§8 开放问题已全部决策，定名 Voxmit）是需求与方案的唯一事实来源。
 - 仓库：https://github.com/scottli139/voxmit（Private，2026-08-17 创建）。
@@ -55,9 +55,10 @@
 
 创建工程时请按以下模块组织代码，名称沿用文档命名：
 
-- **VoicePipeline** —— 主链路状态机协调器（文档 §3.4.1 / §4.2.0）；按键时序判定（200ms 防误触、300ms 误触取消、5 分钟上限、旁路修饰键）集中在此层。
-- **HotkeyManager** —— 全局热键；默认右 Option 按住说话（Push-to-Talk），CGEventTap **listen-only**（只需"输入监控"权限）；Esc 取消录音；热键冲突检测。
-- **AudioCapture** —— 音频采集；实时电平反馈；单次录音上限 5 分钟；音频仅存内存不落盘；`Info.plist` 需声明 `NSMicrophoneUsageDescription`。
+- **VoicePipeline**（Phase 2 已落地状态机）—— 主链路状态机协调器（文档 §3.4.1 / §4.2.0）；按键时序判定（200ms 防误触、300ms 误触取消、5 分钟上限、旁路修饰键）集中在此层；下游依赖全部协议注入（时钟 `PipelineClock` + §9.1 协议 + `AudioCapturing` / `ContextCollecting`），占位实现见 `Pipeline/PlaceholderServices.swift`。
+- **PermissionManager**（Phase 1 已落地，`Modules/Permissions/`）—— 三权限检测与引导（文档 §4.4 权限矩阵）；系统 API 收敛在 `PermissionChecking` 协议后便于 mock；降级决策收敛在纯值类型 `PermissionSnapshot`（无输入监控 → 菜单栏点击录音；无辅助功能 → 仅剪贴板注入），快照经 Combine 实时同步给 VoicePipeline。
+- **HotkeyManager**（Phase 2 已落地，`Modules/Hotkey/`）—— 全局热键；默认右 Option 按住说话（Push-to-Talk），CGEventTap **listen-only**（只需"输入监控"权限）；Esc 取消录音；`HotkeyEventParser` 纯解析器承载判定逻辑（可单测），tap 失效自动恢复 + 看门狗巡检重建；热键冲突检测与自定义（FR-B2）属 P1 未做。
+- **AudioCapture**（Phase 3 已落地，`Modules/Audio/`）—— 音频采集；AVAudioEngine + AVAudioConverter 重采样 16kHz mono Float32，仅存内存不落盘；50ms 电平发布（Combine）、5 分钟上限看门狗（`MaxDurationWatchdog`，回调接 `VoicePipeline.handleMaxRecordingDuration`）、设备热切换重建续录；纯逻辑（电平/静音裁剪/重采样/设备决策）拆在 `AudioProcessing.swift` 可单测。
 - **TranscriptionEngine** —— 转写引擎抽象为协议，WhisperKit（默认 small 模型）/ Speech / 云端可运行时切换；支持自定义热词词表。
 - **PromptRefiner** —— LLM 润色（去口水词、句式规范化、指代消解）；超时 3 秒回退注入原始转写；提供旁路开关（右 Option+Shift 跳过润色）。
 - **ContextCollector** —— 前台 App 识别、选中文本/光标读取；热键按下时快照注入目标（FR-F5，见文档 §3.4.3）；无权限时静默降级为"无上下文"模式。

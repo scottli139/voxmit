@@ -36,34 +36,48 @@
 - 2026-08-17：坑——构建设置正确名是 `GENERATE_INFOPLIST_FILE`（不是 `GENERATE_INFOPLIST`，无效设置曾致测试 target 签名失败）；GitHub 连接间歇性超时，SPM 解析靠重试循环完成。
 - 2026-08-17：`Resources/` 与 Hotkey/Audio 等 Modules 子目录暂无内容未建，随对应 Phase 建立；`llm.model` 默认 `moonshot-v1-8k`（§9.2 交由实现按服务商文档定，选低价通用模型，用户可改）。
 
-### Phase 1: 权限自检与引导 📋 (FR-G5)
+### Phase 1: 权限自检与引导 ✅ (FR-G5)
 
 依赖：Phase 0
 
-- [ ] PermissionManager：三权限检测封装（麦克风 `AVCaptureDevice.authorizationStatus` / 输入监控 `CGPreflightListenEventAccess` / 辅助功能 `AXIsProcessTrusted`）
-- [ ] 权限自检页：状态总览 + 逐项"打开系统设置"深链 + 状态自动刷新
-- [ ] 首次启动引导流程（麦克风 → 输入监控 → 辅助功能；辅助功能可跳过、降级运行）
-- [ ] 降级模式贯穿：无输入监控 → 菜单栏点击开始/停止录音；无辅助功能 → 仅剪贴板注入（需求文档 §4.4 矩阵）
+- [x] PermissionManager：三权限检测封装（麦克风 `AVCaptureDevice.authorizationStatus` / 输入监控 `CGPreflightListenEventAccess` / 辅助功能 `AXIsProcessTrusted`）
+- [x] 权限自检页：状态总览 + 逐项"打开系统设置"深链 + 状态自动刷新
+- [x] 首次启动引导流程（麦克风 → 输入监控 → 辅助功能；辅助功能可跳过、降级运行）
+- [x] 降级模式贯穿：无输入监控 → 菜单栏点击开始/停止录音；无辅助功能 → 仅剪贴板注入（需求文档 §4.4 矩阵）
 
-### Phase 2: 全局热键与状态机 📋 (FR-B1, FR-B5)
+- 2026-08-17：Phase 1 落地。新增 `Modules/Permissions/PermissionManager.swift`（PermissionChecking 协议 + SystemPermissionChecker + PermissionManager + PermissionSnapshot，降级决策收敛在快照上）、`UI/PermissionOnboardingView.swift`（状态总览 + 深链 + Timer 每秒轮询，窗口关闭自动停止）、`UI/PermissionOnboardingWindowController.swift`（NSWindow 手动托管）、`VoxmitAppDelegate.swift`（首启判定 + 快照经 Combine 同步给 Pipeline）；菜单栏新增「权限自检…」、权限缺失提示、无输入监控时的录音降级入口占位（Phase 2 接线）。
+- 2026-08-17：深链实测（macOS 26.6）三条全部有效：`…?Privacy_Microphone` / `?Privacy_ListenEvent` / `?Privacy_Accessibility` 均打开系统设置并路由到隐私与安全性面板（SecurityPrivacyExtension 进程启动为证）；子页面锚点导航无法从 shell 程序化确认（构建机无屏幕录制/AX 权限），列入手动验收项，验证方法与证据见 `docs/implementation-notes.md`。
+- 2026-08-17：坑——`@Published private(set)` 的 `$` 投影对外不可写，`assign(to: &$x)` 跨类型编译失败，改 sink + `applyPermissionSnapshot` 方法；单测以 App 为宿主（TEST_HOST）会真实启动 App，applicationDidFinishLaunching 里用 `XCTestConfigurationFilePath` 环境变量守卫，避免测试运行时弹引导窗/接真实权限。
+- 2026-08-17：验证全绿——build 成功、test 18 用例通过（快照组合/降级矩阵/Manager mock 行为/首启判定矩阵/Pipeline 降级标记/引导标记默认值）。授权弹窗、引导页视觉、菜单实际展示属手动验收项（见 `docs/TESTING.md` 权限路径）。
+
+### Phase 2: 全局热键与状态机 ✅ (FR-B1, FR-B5)
 
 依赖：Phase 0、Phase 1
 
-- [ ] CGEventTap **listen-only** 监听 `flagsChanged`，右 Option（keyCode 0x3D）按下/松开判定（需求文档 §4.2.1）
-- [ ] `tapDisabledByTimeout` / `tapDisabledByUserInput` 监听与自动恢复；RunLoop source 失效重建
-- [ ] VoicePipeline 状态机（需求文档 §3.4.1）：200ms 防误触、300ms 误触取消、Esc 取消（FR-B5）、旁路修饰键判定（FR-D4 输入）
-- [ ] 菜单栏点击录音的降级触发路径
-- [ ] 单测：状态机时序全路径（mock 时钟与事件源，清单见 `docs/TESTING.md`）
+- [x] CGEventTap **listen-only** 监听 `flagsChanged`，右 Option（keyCode 0x3D）按下/松开判定（需求文档 §4.2.1）
+- [x] `tapDisabledByTimeout` / `tapDisabledByUserInput` 监听与自动恢复；RunLoop source 失效重建
+- [x] VoicePipeline 状态机（需求文档 §3.4.1）：200ms 防误触、300ms 误触取消、Esc 取消（FR-B5）、旁路修饰键判定（FR-D4 输入）
+- [x] 菜单栏点击录音的降级触发路径
+- [x] 单测：状态机时序全路径（mock 时钟与事件源，清单见 `docs/TESTING.md`）
 
-### Phase 3: 音频采集 📋 (FR-A1, FR-A2, FR-A3)
+- 2026-08-17：Phase 2 落地。新增 `Modules/Hotkey/HotkeyManager.swift`（listen-only tap + `HotkeyEventParser` 纯解析器 + tap 自愈与 5s 看门狗）、`Pipeline/PipelineClock.swift`（时钟协议 + 真实时钟）、`Pipeline/PlaceholderServices.swift`（下游模块 no-op 占位）；VoicePipeline 重写为完整状态机（依赖全协议注入）；菜单降级入口接活（`handleMenuToggle`，无麦克风权限时禁用）；§9.1 三个异步协议补 `Sendable` 约束。
+- 2026-08-17：坑（测试基建，详见 implementation-notes）——① 非隔离异步协议方法跑在协作线程池，MockClock 裸字典被主线程 cancel 与池线程注册并发踩踏致 SIGSEGV，mock 内部状态必须加锁；② Date 以 2001 纪元存秒（大基数 Double 误差 ~1e-7），"恰好 300ms"边界断言不可行，改 ±1ms 逼近；③ 虚拟时钟 sleep 必须锚定 keyDown 绝对时刻（任务调度晚于 advance 的竞态）；④ 异步链路等待用"主 Actor 探针×N"（FIFO 确定），不用定长 sleep。
+- 2026-08-17：环境坑——本机 DerivedData 在外置盘，一旦有测试失败，Swift Testing 的进程内符号化（CoreSymbolication 读二进制）会卡数分钟呈假死状；`script -q /dev/null xcodebuild ...` 给 pty 让输出行缓冲可实时观察。
+- 2026-08-17：验证全绿——build 成功、test 42 用例通过（Phase 0/1 的 18 + 新增 24：状态机 17 + 热键解析器 7）。真实右 Option 按住/松开、Esc、tap 被系统回收后的恢复属真机手动验收项。
+
+### Phase 3: 音频采集 ✅ (FR-A1, FR-A2, FR-A3)
 
 依赖：Phase 0
 
-- [ ] AVAudioEngine 采集 + AVAudioConverter 重采样 16kHz mono Float32，内存缓冲不落盘
-- [ ] 50ms 电平（RMS → dBFS）发布，供 HUD 波形
-- [ ] 设备热切换：ConfigurationChange 重建 engine 续录、已录部分保留；指定设备断开回落系统默认并提示
-- [ ] 5 分钟上限自动走"松手"流程并提示（FR-A3）；静音前缀裁剪
-- [ ] 麦克风权限被拒 / 无输入设备的错误路径
+- [x] AVAudioEngine 采集 + AVAudioConverter 重采样 16kHz mono Float32，内存缓冲不落盘
+- [x] 50ms 电平（RMS → dBFS）发布，供 HUD 波形
+- [x] 设备热切换：ConfigurationChange 重建 engine 续录、已录部分保留；指定设备断开回落系统默认并提示
+- [x] 5 分钟上限自动走"松手"流程并提示（FR-A3）；静音前缀裁剪
+- [x] 麦克风权限被拒 / 无输入设备的错误路径
+
+- 2026-08-17：Phase 3 落地。新增 `Modules/Audio/`：`AudioProcessing.swift`（AudioLevelMeter 电平 / SilenceTrimmer 静音前缀裁剪 / PCMResampler 重采样 / InputDeviceResolver 设备决策，全部纯逻辑可单测）与 `AudioCapture.swift`（`AudioCapturing` 实装 + MaxDurationWatchdog 上限看门狗 + InputDeviceCatalog/Lookup 设备枚举与查询）；Pipeline 接入静音前缀裁剪与真实 audio（delegate 注入替换 NoOp 占位，5 分钟回调接 `handleMaxRecordingDuration`）；设置页输入设备 Picker 生效（空串 = 系统默认）。
+- 2026-08-17：坑——AVAudioConverter SRC 启动延迟实测缺口 ~176–240 帧（≈11–15ms @16k，恒定不随流增长，秒级录音可忽略），单测按实测容忍区间断言；`AVAudioConverterOutputStatus` 没有 `noDataNow` 成员（那是输入侧 `AVAudioConverterInputStatus`）；`inputNode.audioUnit` 是 Optional；看门狗计时锚定 `start()` 调用时刻（同 Phase 2 的"任务调度晚于时钟推进"竞态）。
+- 2026-08-17：验证全绿——build 成功、test 63 用例通过（42 + 新增 21：电平 4 / 静音裁剪 5 / 重采样 4 / 设备决策 4 / 看门狗 3 / 裁剪接线 1）。真实录音质量、拔插设备热切换、5 分钟上限触发、权限拒绝路径属真机手动验收项。
 
 ### Phase 4: 录音 HUD 📋
 
