@@ -79,13 +79,18 @@
 - 2026-08-17：坑——AVAudioConverter SRC 启动延迟实测缺口 ~176–240 帧（≈11–15ms @16k，恒定不随流增长，秒级录音可忽略），单测按实测容忍区间断言；`AVAudioConverterOutputStatus` 没有 `noDataNow` 成员（那是输入侧 `AVAudioConverterInputStatus`）；`inputNode.audioUnit` 是 Optional；看门狗计时锚定 `start()` 调用时刻（同 Phase 2 的"任务调度晚于时钟推进"竞态）。
 - 2026-08-17：验证全绿——build 成功、test 63 用例通过（42 + 新增 21：电平 4 / 静音裁剪 5 / 重采样 4 / 设备决策 4 / 看门狗 3 / 裁剪接线 1）。真实录音质量、拔插设备热切换、5 分钟上限触发、权限拒绝路径属真机手动验收项。
 
-### Phase 4: 录音 HUD 📋
+### Phase 4: 录音 HUD ✅
 
 依赖：Phase 2（状态机）、Phase 3（电平）
 
-- [ ] 非激活面板（`NSPanel` + `.nonactivatingPanel`）：实时波形 + 当前目标 App 名 + 阶段状态（录音/转写/润色/注入）
-- [ ] `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]`：全屏终端、多 Space 可见
-- [ ] 反馈态：成功对勾淡出 / 取消静默 / 失败原因与"未润色"角标 / "已复制请手动粘贴"提示
+- [x] 非激活面板（`NSPanel` + `.nonactivatingPanel`）：实时波形 + 当前目标 App 名 + 阶段状态（录音/转写/润色/注入）
+- [x] `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]`：全屏终端、多 Space 可见
+- [x] 反馈态：成功对勾淡出 / 取消静默 / 失败原因与"未润色"角标 / "已复制请手动粘贴"提示
+
+- 2026-08-18：Phase 4 落地。新增 `UI/RecordingHUD.swift`（HUDVisibility 停留决策 + LevelHistory 波形历史 + RecordingHUDViewModel/View/Controller）；Pipeline 最小扩展：`targetSnapshot` 转 `@Published`、`lastInjectionReport`（InjectionReport = 档位 + wasRefined，"未润色"角标与 clipboardOnly 提示的数据源）、`InjectionOutcome` 补 Equatable；位置取主屏可见区域底部居中。
+- 2026-08-18：关键设计——状态机保持"终止态即刻回 idle"不变，停留计时在 HUD 侧（HUDVisibility 纯函数决策延迟，Controller 按 PipelineClock 调度）；两处需对"终止态后紧跟的 idle"去抖：Controller 已有 hideTask 时忽略该 idle、ViewModel 锁存终止态展示（否则成功对勾会被瞬间清空）。
+- 2026-08-18：验证全绿——build 成功、test 86 用例通过（63 + 新增 23：可见性矩阵 7 / 波形历史 4 / 提示映射 1 / 视图模型 7 / Pipeline 报告 4）。nonactivating 焦点保持、全屏/多 Space 可见性、各反馈态视觉属真机手动验收项。
+- 2026-08-18：架构设计文档 `docs/ARCHITECTURE.md` 建立（设计意图 + Phase 0–4 as-built 实况；§12 记录与需求文档的偏离点）；AGENTS.md 与 README.md 文档地图同步收录。
 
 ### Phase 5: 本地转写 📋 (FR-C1)
 

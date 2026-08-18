@@ -19,6 +19,7 @@
 | 文件 | 内容 |
 |---|---|
 | `语音编程工具-需求分析与方案说明.md` | 需求与方案唯一事实来源（FR 编号、优先级、里程碑、接口契约 §9.1） |
+| `docs/ARCHITECTURE.md` | 架构设计文档：设计意图 + Phase 0–4 as-built 实况（分层、状态机、模块边界、并发模型） |
 | `PLAN.md` | 开发计划与任务进度（唯一的任务看板，不在本文件重复维护） |
 | `CONTRIBUTING.md` | 贡献指南：环境搭建、提交前检查链、代码质量要求、Commit/PR 规范 |
 | `docs/TESTING.md` | 测试要求：质量门禁、单测规范、真机手动测试矩阵、性能验收方法、CI 规划 |
@@ -59,6 +60,7 @@
 - **PermissionManager**（Phase 1 已落地，`Modules/Permissions/`）—— 三权限检测与引导（文档 §4.4 权限矩阵）；系统 API 收敛在 `PermissionChecking` 协议后便于 mock；降级决策收敛在纯值类型 `PermissionSnapshot`（无输入监控 → 菜单栏点击录音；无辅助功能 → 仅剪贴板注入），快照经 Combine 实时同步给 VoicePipeline。
 - **HotkeyManager**（Phase 2 已落地，`Modules/Hotkey/`）—— 全局热键；默认右 Option 按住说话（Push-to-Talk），CGEventTap **listen-only**（只需"输入监控"权限）；Esc 取消录音；`HotkeyEventParser` 纯解析器承载判定逻辑（可单测），tap 失效自动恢复 + 看门狗巡检重建；热键冲突检测与自定义（FR-B2）属 P1 未做。
 - **AudioCapture**（Phase 3 已落地，`Modules/Audio/`）—— 音频采集；AVAudioEngine + AVAudioConverter 重采样 16kHz mono Float32，仅存内存不落盘；50ms 电平发布（Combine）、5 分钟上限看门狗（`MaxDurationWatchdog`，回调接 `VoicePipeline.handleMaxRecordingDuration`）、设备热切换重建续录；纯逻辑（电平/静音裁剪/重采样/设备决策）拆在 `AudioProcessing.swift` 可单测。
+- **RecordingHUD**（Phase 4 已落地，`UI/RecordingHUD.swift`）—— 非激活 NSPanel 录音浮层（不抢焦点、全屏/多 Space 可见）；波形 + 阶段状态 + 反馈态（成功/未润色角标/手动粘贴/失败）；停留时长由 `HUDVisibility` 纯函数决策、计时在 HUD 侧（状态机终止态保持即刻回 idle）；反馈数据源自 Pipeline 的 `lastInjectionReport`。
 - **TranscriptionEngine** —— 转写引擎抽象为协议，WhisperKit（默认 small 模型）/ Speech / 云端可运行时切换；支持自定义热词词表。
 - **PromptRefiner** —— LLM 润色（去口水词、句式规范化、指代消解）；超时 3 秒回退注入原始转写；提供旁路开关（右 Option+Shift 跳过润色）。
 - **ContextCollector** —— 前台 App 识别、选中文本/光标读取；热键按下时快照注入目标（FR-F5，见文档 §3.4.3）；无权限时静默降级为"无上下文"模式。

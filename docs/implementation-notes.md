@@ -8,7 +8,7 @@
 
 ## 目录
 
-- [已知问题](#已知问题)（暂无）
+- [已知问题](#已知问题)
 - [架构要点](#架构要点)（Phase 1 起逐步补充）
 - [评审期已确认的实现要点](#评审期已确认的实现要点)
 - [发布流程](#发布流程)（工程建立后补充）
@@ -16,7 +16,12 @@
 
 ## 已知问题
 
-（暂无）
+### ad-hoc 签名下"辅助功能"授权条目失效（开发构建）
+
+- 现象（2026-08-18 真机首测）：系统设置中 Voxmit 的辅助功能开关已打开，但 `AXIsProcessTrusted()` 持续返回 false，权限自检页仍显示"未授权"（麦克风/输入监控正常翻绿）。
+- 原因：开发构建为 ad-hoc 签名，designated requirement 仅 cdhash（`codesign -dr - <app>` 可查），无 Team ID；TCC 辅助功能授权绑定签名身份，此前自动创建/旧构建留下的条目对当前二进制无效——列表里开关显示为开，实为失效条目。
+- 应对（实测有效）：系统设置中 "−" 移除 Voxmit → `tccutil reset Accessibility com.voxmit.app` → 手动 "+" 重新添加当前构建并打开开关（必要时重启 App）。
+- 开发期注意：重新构建会改变 cdhash，辅助功能授权可能需重做上述步骤；根治靠稳定签名身份——开发期可用 Xcode 登录个人 Apple ID 的 "Apple Development" 证书，发布构建走 Developer ID + 公证（需求文档 §4.4）。
 
 ## 架构要点
 
@@ -51,6 +56,13 @@
 - 静音前缀裁剪工程值（§4.2.2 蓝牙麦协商延迟场景）：10ms 帧峰值检测，阈值 **-45 dBFS**（≈ 振幅 0.0056；高于常见底噪 -60dB 以下、远低于说话电平 -20dB 上下），命中后保留 **50ms** 前导防切辅音起音；全静音 → 空数组，上游按"空音频"静默结束（§4.2.3）。
 - MaxDurationWatchdog 独立组件（limit + PipelineClock 注入）：计时**锚定 `start()` 调用时刻**（`remaining = limit - (now - startedAt)`），否则"任务首次调度晚于时钟推进"的竞态让截止点漂移（同 Phase 2 状态机确认期结论）；回调在协作线程池触发，接收方自行切主线程。
 - 设备热切换：`.AVAudioEngineConfigurationChange` 通知（queue: .main）→ teardown + beginCapture 重建续录，`samples` 缓冲不动（已录保留）；重建失败（如设备全拔光）发 `.captureInterrupted` 事件；指定设备断开由 resolver 判定回落并发 `.inputDeviceFellBackToDefault`（提示 UI 均待 Phase 4）。
+
+### 录音 HUD（Phase 4）
+
+- 非激活面板硬要求的落法：`NSPanel` + `.nonactivatingPanel` + `ignoresMouseEvents = true` + `orderFront` 显示（**不** `makeKey`/`NSApp.activate`——焦点必须留在目标 App；权限引导窗才用 activate）；`collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]` 全屏/多 Space 可见；位置 = `NSScreen.main.visibleFrame` 底部居中（visibleFrame 已避开 Dock）。
+- 状态机与 HUD 的职责切分：终止态（injected/failed/cancelled）在状态机里**即刻回 idle 不变**；停留时长（成功 0.8s / 未润色 1.2s / 手动粘贴 2.5s / 失败 2.5s）由 HUD 侧 `HUDVisibility` 纯函数决策 + Controller 用 PipelineClock 调度隐藏。**两处必须对"终止态后紧跟的 idle"去抖**：Controller 已有 hideTask 时忽略该 idle；ViewModel 锁存终止态展示（`phase.isTerminalFeedback`），否则成功对勾会被 idle 瞬间清空——这是本轮实测抓到的真 bug。
+- 反馈态数据源：Pipeline 的 `lastInjectionReport: InjectionReport?`（outcome 档位 + wasRefined），在 finish 前赋值（Combine 时序保证 .injected 到达时已可见）；keyDown 清空。"未润色"角标 = injected 且 wasRefined == false（覆盖润色回退与 FR-D4 旁路两种路径）。
+- ViewModel 订阅 `audioCapture.levels`（音频线程发布）必须 `receive(on: DispatchQueue.main)`；Combine sink 进 @MainActor 用 `MainActor.assumeIsolated`（发射源均在主线程，安全）。
 
 ## 评审期已确认的实现要点
 

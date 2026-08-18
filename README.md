@@ -9,6 +9,7 @@ macOS 菜单栏常驻的语音驱动 AI 编程工具：按住全局热键说话 
 | 文件 | 内容 |
 |---|---|
 | [需求分析与方案说明](语音编程工具-需求分析与方案说明.md) | 需求与方案唯一事实来源（FR 编号、优先级、里程碑、接口契约） |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计文档（设计意图 + as-built 实况，模块边界与并发模型） |
 | [PLAN.md](PLAN.md) | 开发计划与任务进度（唯一的任务看板） |
 | [AGENTS.md](AGENTS.md) | 面向 AI 编程代理的项目指南（文档体系、约定、权限与隐私红线） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南：环境搭建、提交前检查链、Commit/PR 规范 |
