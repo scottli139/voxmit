@@ -62,7 +62,7 @@ test / chore / style / refactor: ...
 - **密钥零容忍**：LLM API Key 只存 Keychain；代码、配置、日志中禁止出现，评审时一票否决；
 - **隐私红线**：录音数据仅存内存不落盘；任何外发网络请求（润色 / 云端 ASR）必须有用户告知与开关；
 - **语言约定**：代码标识符英文、注释跟随 Swift 社区惯例；文档、commit 描述使用简体中文；
-- **文档同步**：用户可见行为变更同步需求文档，并同提交更新 `docs/USER_GUIDE.md`（使用说明）；任务进度只更新 `PLAN.md`；实现踩坑记入 `docs/implementation-notes.md`；修改以上任何约定时同步 `AGENTS.md`。
+- **文档同步**：用户可见行为变更同步需求文档，并同提交更新 `docs/USER_GUIDE.md`（使用说明）；任务进度只更新 `PLAN.md`；实现踩坑记入 `docs/implementation-notes.md`；修改以上任何约定时同步 `AGENTS.md`。文档中的图示禁用 ASCII 字符画，统一用 mermaid 代码块（约定详见 `AGENTS.md` §5）。
 
 ## 从哪里开始
 

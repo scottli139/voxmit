@@ -20,7 +20,7 @@
 - [9. 性能预算](#9-性能预算)
 - [10. 目录结构](#10-目录结构)
 - [11. 测试架构](#11-测试架构)
-- [12. 与需求文档的差异说明](#12-与需求文档的差异说明)
+- [12. 与需求文档的一致性](#12-与需求文档的一致性)
 
 ---
 
@@ -28,30 +28,31 @@
 
 核心链路一句话：**按住全局热键说话 → 本地语音转写 → LLM 润色为工程 Prompt → 自动注入当前 AI 开发工具的输入框**（§1.2）。架构形态为菜单栏常驻 Agent（`LSUIElement = true`，无主窗口），围绕一条由状态机驱动的主链路组织。
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│ UI 层（SwiftUI / AppKit，全部 @MainActor）                         │
-│  MenuBarExtra 菜单 · SettingsView · PermissionOnboardingView ·    │
-│  RecordingHUD（非激活 NSPanel 浮层）                               │
-├──────────────────────────────────────────────────────────────────┤
-│ 协调层                                                             │
-│  VoicePipeline（@MainActor，§3.4.1 状态机 + 时序判定）             │
-│  VoxmitAppDelegate（组合根：创建依赖、接线事件与订阅）              │
-├──────────────┬──────────────┬──────────────┬─────────────────────┤
-│ Modules 能力层（全部协议注入，实现可替换、可 mock）                 │
-│ HotkeyManager│ AudioCapture │ Permission   │ Storage             │
-│ 全局热键      │ 音频采集      │ Manager      │ Settings/Keychain   │
-│ （已实现）    │ （已实现）    │ 权限自检      │ （已实现）           │
-│              │              │ （已实现）    │                     │
-├──────────────┴──────────────┴──────────────┴─────────────────────┤
-│ 规划中的能力层（协议已定义，占位实现在接线）                        │
-│ TranscriptionEngine(Phase 5) · PromptRefiner(Phase 6) ·           │
-│ ContextCollector(Phase 7) · Injector(Phase 8)                     │
-├──────────────────────────────────────────────────────────────────┤
-│ 系统 API 层                                                        │
-│ CGEventTap · AVAudioEngine/AVAudioConverter · AVFoundation(TCC) · │
-│ CoreAudio · ApplicationServices(AX) · UserDefaults · Keychain     │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph UI["UI 层（SwiftUI / AppKit，全部 @MainActor）"]
+        U["MenuBarExtra 菜单 · SettingsView · PermissionOnboardingView<br>RecordingHUD（非激活 NSPanel 浮层）"]
+    end
+    subgraph COORD["协调层"]
+        VP["VoicePipeline（@MainActor，§3.4.1 状态机 + 时序判定）"]
+        AD["VoxmitAppDelegate（组合根：创建依赖、接线事件与订阅）"]
+    end
+    subgraph CAP["Modules 能力层（全部协议注入，实现可替换、可 mock）"]
+        HK["HotkeyManager<br>全局热键（已实现）"]
+        AC["AudioCapture<br>音频采集（已实现）"]
+        PM["PermissionManager<br>权限自检（已实现）"]
+        ST["Storage<br>设置 / Keychain（已实现）"]
+        TE["TranscriptionEngine<br>（规划，Phase 5）"]
+        PR["PromptRefiner<br>（规划，Phase 6）"]
+        CC["ContextCollector<br>（规划，Phase 7）"]
+        IJ["Injector<br>（规划，Phase 8）"]
+    end
+    subgraph SYS["系统 API 层"]
+        SA["CGEventTap · AVAudioEngine / AVAudioConverter · AVFoundation(TCC)<br>CoreAudio · ApplicationServices(AX) · UserDefaults · Keychain"]
+    end
+    UI --> COORD
+    COORD --> CAP
+    CAP --> SYS
 ```
 
 层次依赖规则：UI → 协调层 → 能力层 → 系统 API 层；能力层模块之间不直接互相依赖（如 AudioCapture 不认识 HotkeyManager），一切协作经 VoicePipeline 或 VoxmitAppDelegate 接线。
@@ -62,8 +63,8 @@
 
 主链路上的每一类下游能力都抽象为协议，定义在 `Voxmit/Pipeline/Models.swift`（照抄 §9.1 契约）：
 
-- `TranscriptionEngine` / `PromptRefining` / `TextInjecting`（§9.1，均带 `Sendable` 约束，见 §12-4）
-- `AudioCapturing` / `ContextCollecting`（§9.1 未列，实现期按 §4.2.2/§4.2.5 职责补充，见 §12-3）
+- `TranscriptionEngine` / `PromptRefining` / `TextInjecting`（§9.1，均带 `Sendable` 约束——Swift 6 严格并发要求，见 §5）
+- `AudioCapturing` / `ContextCollecting`（§9.1，Phase 2/3 实现期定义、需求文档 v0.4 收录）
 
 VoicePipeline 只面向协议编程，系统实现（`AudioCapture`、未来的 `WhisperKitEngine` 等）在组合根（`VoxmitAppDelegate`）注入；单测用 mock 注入，**核心逻辑零系统权限可测**（`docs/TESTING.md` 的硬性要求）。协议未实现的模块用 no-op 占位接线（`Voxmit/Pipeline/PlaceholderServices.swift`），命名统一 `NoOp*`/`Placeholder*` 前缀防止误用。
 
@@ -96,31 +97,34 @@ VoicePipeline 只面向协议编程，系统实现（`AudioCapture`、未来的 
 
 ### 3.1 状态迁移图
 
+```mermaid
+stateDiagram-v2
+    [*] --> idle
+    idle --> pending : keyDown（audio.start + 目标快照，进入 200ms 确认期）
+    pending --> idle : keyUp（确认期内）— 整次忽略：audio.cancel，静默
+    pending --> cancelled : Esc（确认期内）— audio.cancel
+    pending --> recording : 确认期到（≥200ms 仍按住）
+    recording --> cancelled : keyUp 且录音不足 300ms（误触取消，audio.cancel）
+    recording --> cancelled : Esc（audio.cancel）
+    recording --> transcribing : keyUp 且 ≥300ms（或 5 分钟上限回调）
+    transcribing --> idle : 空转写，静默结束（§4.2.3）
+    transcribing --> refining : 非空
+    transcribing --> injecting : FR-D4 旁路（跳过润色）
+    transcribing --> cancelled : Esc（取消处理 Task）
+    refining --> injecting
+    refining --> cancelled : Esc（取消处理 Task）
+    injecting --> injected
+    injecting --> failed
+    injecting --> cancelled : Esc（取消处理 Task）
+    injected --> idle : 即刻回 idle（HUD 停留计时在 HUD 侧，§3.3）
+    failed --> idle : 即刻回 idle
+    cancelled --> idle
+    note right of pending
+        内部态，公开状态仍 idle
+    end note
 ```
-                    keyDown（audio.start + 目标快照，进入 200ms 确认期）
-   ┌──────────────────────────────────────────────────────────┐
-   ▼                                                          │
- pending（内部态，公开状态仍 idle）                             │
-   │  │                                                       │
-   │  ├─ keyUp（确认期内）──► 整次忽略：audio.cancel，静默留在 idle
-   │  └─ Esc（确认期内）──► audio.cancel ──► cancelled ──► idle
-   ▼ 确认期到（≥200ms 仍按住）
- recording(startedAt:) ◄───────────────┐
-   │  │                                 │
-   │  ├─ keyUp 且时长 <300ms ──► cancelled ──► idle（误触取消）
-   │  ├─ Esc ──► audio.cancel ──► cancelled ──► idle
-   │  └─ keyUp 且 ≥300ms（或 5 分钟上限回调）──► 处理链 ─┐
-   ▼                                                    │
- transcribing ──空转写──► idle（静默，§4.2.3）            │
-   │ 非空                                               │
-   ▼                                                    │
- refining（FR-D4 旁路时跳过此态） ──► injecting ──► injected / failed
-   │                                                    │
-   └── 处理中 Esc：取消处理 Task ──► cancelled ──► idle ◄─┘
 
-终止态（injected / failed / cancelled）在状态机内即刻回 idle；
-HUD 停留计时在 HUD 侧（见 §3.3）。
-```
+终止态（injected / failed / cancelled）在状态机内即刻回 idle；HUD 停留计时在 HUD 侧（见 §3.3）。
 
 ### 3.2 事件与判定表
 
@@ -197,7 +201,7 @@ HUD 停留计时在 HUD 侧（见 §3.3）。
 
 ### 4.7 ContextCollector —— 上下文感知（规划，Phase 7）
 
-- **协议（已定义）**：`ContextCollecting`（`snapshotTarget() -> TargetSnapshot`；§9.1 未列，按 §4.2.5 补充，见 §12-3）。
+- **协议（已定义）**：`ContextCollecting`（`snapshotTarget() -> TargetSnapshot`；§9.1）。
 - **现状**：占位 `PlaceholderContextCollector` 返回空快照（pid 0、空 bundleID/名称），等价 §4.2.5 的"无上下文"模式；HUD 目标 App 名因此暂为占位显示。
 - **规划要点（§4.2.5、§3.4.3）**：keyDown 快照 `NSWorkspace.frontmostApplication` + AX 焦点窗口标题；bundleID → `AppCategory` 适配表；松手时前台校验；无 AX 权限降级为"仅 App 名"。
 
@@ -226,18 +230,35 @@ HUD 停留计时在 HUD 侧（见 §3.3）。
 
 工程为 Swift 6 严格并发（`SWIFT_VERSION = 6.0`）。隔离约定：
 
-```
-主 Actor（@MainActor）                     实时音频线程            协作线程池
-─────────────────────────────             ─────────────────      ─────────────────
-VoicePipeline / PermissionManager         AVAudioEngine tap 回调  非隔离 async 协议方法
-HotkeyManager / VoxmitAppDelegate          └ 重采样              （transcribe/refine/inject
-RecordingHUDViewModel/Controller             └ NSLock 短临界区追加   与 MockClock.sleep）
-UI 全部                                     └ 锁外发布 levels      MaxDurationWatchdog 计时任务
-CGEventTap 回调（挂主 RunLoop）
+```mermaid
+flowchart LR
+    subgraph MA["主 Actor（@MainActor）"]
+        A1["VoicePipeline / PermissionManager"]
+        A2["HotkeyManager / VoxmitAppDelegate"]
+        A3["RecordingHUDViewModel / Controller"]
+        A4["UI 全部"]
+        A5["CGEventTap 回调（挂主 RunLoop）"]
+    end
+    subgraph RT["实时音频线程"]
+        B1["AVAudioEngine tap 回调"]
+        B2["重采样"]
+        B3["NSLock 短临界区追加样本"]
+        B4["锁外发布 levels"]
+        B1 --> B2 --> B3 --> B4
+    end
+    subgraph POOL["协作线程池"]
+        C1["非隔离 async 协议方法<br>（transcribe / refine / inject）"]
+        C2["MockClock.sleep"]
+        C3["MaxDurationWatchdog 计时任务"]
+    end
+    MA -->|调用（Sendable 协议）| POOL
+    POOL -->|await 返回| MA
+    RT -->|"levels / events，订阅方 receive(on:) 主线程"| MA
+    MA -->|start / stop / cancel（dispatchPrecondition 主线程）| RT
 ```
 
 - **@MainActor 类**：协调层与 UI 全部。全局 Actor 隔离类隐式 Sendable，可在 `@Sendable` 闭包中安全捕获。
-- **跨隔离域调用**：Pipeline 调用的 `TranscriptionEngine` 等非隔离 async 协议方法会在协作线程池执行——因此 §9.1 三协议带 `Sendable` 约束（§12-4）；协议返回后经 `await` 回到主 Actor。
+- **跨隔离域调用**：Pipeline 调用的 `TranscriptionEngine` 等非隔离 async 协议方法会在协作线程池执行——因此 §9.1 三协议带 `Sendable` 约束；协议返回后经 `await` 回到主 Actor。
 - **音频实时线程**：tap 回调只做"重采样 → NSLock 短临界区追加样本 → 锁外发布电平"；engine 生命周期方法约定主线程（`dispatchPrecondition` 断言）。`levels`/`events`（`PassthroughSubject`）跨线程发布，订阅方必须 `receive(on:)`（HUD 已如此）。
 - **为什么 MockClock 要加锁**：测试里 `cancel()` 在主线程触发 `onCancel`，而 transcribe 等 mock 的 sleep 注册发生在池线程——裸字典并发踩踏会 SIGSEGV（实测）。`MockClock` 以 NSLock 保护全部状态，"注册与 isCancelled 检查同锁、resume 在锁外"保证 continuation 单次 resume。
 - **`MainActor.assumeIsolated` 使用点**（均有线程保证，禁止新乱用）：CGEventTap 回调（source 挂主 RunLoop，回调即在主线程）；Combine sink（发射源均在主线程）。
@@ -247,29 +268,41 @@ CGEventTap 回调（挂主 RunLoop）
 
 一次完整按键 → 注入的数据流（占位环节以 ⚠️ 标注，待对应 Phase 替换）：
 
-```
-keyDown（右 Option，flagsChanged）
-  → HotkeyEventParser：.hotkeyDown(bypassActive)          [已实现]
-  → VoicePipeline.handleHotkeyDown
-      ├─ TargetSnapshot = ContextCollector.snapshotTarget()  ⚠️ 占位空快照 → Phase 7
-      ├─ AudioCapture.start()：权限/设备检查 → engine+tap 启动   [已实现]
-      ├─ skipRefinement = bypassActive（FR-D4）                 [已实现]
-      └─ 200ms 确认期 → recording
-           ├─ 样本流：tap → PCMResampler → [Float] 内存缓冲      [已实现]
-           ├─ 电平流：50ms RMS→dBFS → levels → HUD 波形          [已实现]
-           └─ 计时：MaxDurationWatchdog(300s)                    [已实现]
-keyUp（或 5 分钟回调）
-  → audio.stop() → [Float]                                [已实现]
-  → SilenceTrimmer.trimLeadingSilence（去开头静音）          [已实现]
-  → transcribing：TranscriptionEngine.transcribe(samples)  ⚠️ 占位返回 "" → Phase 5
-      └─ 空串 → 静默回 idle（§4.2.3）                        [已实现]
-  → refining（旁路则跳过）：PromptRefining.refine(raw, VoiceContext)
-      ⚠️ 占位原样返回 → Phase 6；VoiceContext 分类暂固定 .other → Phase 7
-  → injecting：TextInjecting.inject(text, into: target, autoSend)
-      ⚠️ 占位恒失败 → Phase 8；autoSend 读 inject.autoSend 设置（FR-F4）
-  → lastInjectionReport = InjectionReport(outcome, wasRefined)  [已实现]
-  → injected / failed → idle                                 [已实现]
-       └─ HUD 按 report 展示 对勾 / 未润色角标 / 手动粘贴 / 失败原因 [已实现]
+```mermaid
+sequenceDiagram
+    autonumber
+    participant HK as HotkeyEventParser
+    participant VP as VoicePipeline
+    participant CC as ContextCollector<br>⚠️ 占位 → Phase 7
+    participant AC as AudioCapture
+    participant TE as TranscriptionEngine<br>⚠️ 占位 → Phase 5
+    participant PR as PromptRefining<br>⚠️ 占位 → Phase 6
+    participant IJ as TextInjecting<br>⚠️ 占位 → Phase 8
+    participant HUD as RecordingHUD
+
+    Note over HK: keyDown（右 Option，flagsChanged）
+    HK->>VP: .hotkeyDown(bypassActive)
+    VP->>CC: snapshotTarget() → TargetSnapshot（⚠️ 占位空快照）
+    VP->>AC: start()（权限/设备检查 → engine+tap 启动）
+    Note over VP: skipRefinement = bypassActive（FR-D4）
+    VP->>VP: 200ms 确认期 → recording
+    loop 录音中
+        AC->>AC: tap → PCMResampler → [Float] 内存缓冲
+        AC->>HUD: 50ms RMS→dBFS → levels → 波形
+        Note over AC: MaxDurationWatchdog(300s)
+    end
+    Note over HK: keyUp（或 5 分钟回调）
+    VP->>AC: stop() → [Float]
+    VP->>VP: SilenceTrimmer.trimLeadingSilence（去开头静音）
+    VP->>TE: transcribe(samples)（⚠️ 占位返回 ""）
+    Note over VP: 空串 → 静默回 idle（§4.2.3）
+    VP->>PR: refine(raw, VoiceContext)（旁路则跳过；⚠️ 占位原样返回）
+    Note over PR: VoiceContext 分类暂固定 .other → Phase 7
+    VP->>IJ: inject(text, into: target, autoSend)（⚠️ 占位恒失败）
+    Note over IJ: autoSend 读 inject.autoSend 设置（FR-F4）
+    VP->>VP: lastInjectionReport = InjectionReport(outcome, wasRefined)
+    VP->>HUD: injected / failed → idle
+    Note over HUD: 按 report 展示 对勾 / 未润色角标 / 手动粘贴 / 失败原因
 ```
 
 关键数据载体：`TargetSnapshot`（pid / bundleID / appName / windowTitle / capturedAt，§3.4.3）在 keyDown 瞬间固定，贯穿润色与注入；`InjectionReport` 是 HUD 反馈态的唯一数据源；`PermissionSnapshot` 实时驱动降级（§7）。
@@ -316,30 +349,30 @@ keyUp（或 5 分钟回调）
 现状树（as-built，Phase 0–4）：
 
 ```
-Voxmit.xcodeproj               # objectVersion 70，文件系统同步分组（新增源码免改 pbxproj）
+Voxmit.xcodeproj  # objectVersion 70，文件系统同步分组（新增源码免改 pbxproj）
 Voxmit/
-├── VoxmitApp.swift            # @main：MenuBarExtra + Settings 场景
-├── VoxmitAppDelegate.swift    # 组合根：依赖创建与事件接线（§4.6 未列，实现期新增）
-├── Info.plist                 # LSUIElement、NSMicrophoneUsageDescription
+├── VoxmitApp.swift  # @main：MenuBarExtra + Settings 场景
+├── VoxmitAppDelegate.swift  # 组合根：依赖创建与事件接线（§4.6 未列，实现期新增）
+├── Info.plist  # LSUIElement、NSMicrophoneUsageDescription
 ├── Pipeline/
-│   ├── Models.swift           # §9.1 契约 + 状态/快照/上下文/报告 + 协议（含实现期补充协议）
-│   ├── VoicePipeline.swift    # 状态机协调器（§4.2.0）
-│   ├── PipelineClock.swift    # 时钟协议 + 真实时钟（实现期新增）
+│   ├── Models.swift  # §9.1 契约 + 状态/快照/上下文/报告 + 协议（含实现期补充协议）
+│   ├── VoicePipeline.swift  # 状态机协调器（§4.2.0）
+│   ├── PipelineClock.swift  # 时钟协议 + 真实时钟（实现期新增）
 │   └── PlaceholderServices.swift  # 下游 no-op 占位（随 Phase 5–8 逐个退役）
 ├── Modules/
-│   ├── Permissions/PermissionManager.swift   # FR-G5（§4.6 目录树未列，实现期新增）
-│   ├── Hotkey/HotkeyManager.swift            # §4.2.1
-│   ├── Audio/AudioCapture.swift              # §4.2.2（engine 与系统交互）
-│   ├── Audio/AudioProcessing.swift           # 纯逻辑层（电平/裁剪/重采样/设备决策）
+│   ├── Permissions/PermissionManager.swift  # FR-G5（§4.6 目录树未列，实现期新增）
+│   ├── Hotkey/HotkeyManager.swift  # §4.2.1
+│   ├── Audio/AudioCapture.swift  # §4.2.2（engine 与系统交互）
+│   ├── Audio/AudioProcessing.swift  # 纯逻辑层（电平/裁剪/重采样/设备决策）
 │   └── Storage/SettingsStore.swift + KeychainHelper.swift
 └── UI/
     ├── SettingsView.swift
     ├── PermissionOnboardingView.swift + PermissionOnboardingWindowController.swift
     └── RecordingHUD.swift
-VoxmitTests/                   # 6 个测试文件 + Mocks/（详见 §11）
+VoxmitTests/  # 6 个测试文件 + Mocks/（详见 §11）
 ```
 
-§4.6 规划对照（差异均已在 PLAN/AGENTS 记录，汇总见 §12-5）：`Modules/Transcription|Refiner|Context|Injector` 子目录随 Phase 5–8 建立；`UI/PreviewPanel.swift` / `HistoryView.swift` 为 P1；`Resources/` 随需要建立。
+§4.6 规划对照（需求文档 v0.4 已将目录树对齐为 as-built 现状）：`Modules/Transcription|Refiner|Context|Injector` 子目录随 Phase 5–8 建立；`UI/PreviewPanel.swift` / `HistoryView.swift` 为 P1；`Resources/` 随需要建立。
 
 ## 11. 测试架构
 
@@ -357,16 +390,9 @@ VoxmitTests/                   # 6 个测试文件 + Mocks/（详见 §11）
 
 **只能真机验收**（`docs/TESTING.md` 矩阵，逐 Phase 已列入报告）：TCC 授权弹窗与深链落点、真实右 Option 按住/松开与 Esc、tap 被系统回收后的恢复、真实录音质量、设备热插拔续录、nonactivating 焦点保持、全屏/多 Space HUD、各反馈态视觉、端到端延迟 P95（Phase 9）。
 
-## 12. 与需求文档的差异说明
+## 12. 与需求文档的一致性
 
-实现与需求文档的对照中，以下属于**有意的实现选择或实现期补充**（需求文档未改；如需对齐应回改需求文档并评审）：
-
-1. **终止态停留位置**：§3.4.1 图示 injected"短暂停留后回 idle"；实现为状态机即刻回 idle、停留计时移至 HUD 侧（理由见 §3.3）。
-2. **输入监控引导 API**：§4.2.1 提及 `CGRequestListenEventAccess()`；实现未调用（仅 preflight 检测 + §4.4 自检页深链引导）。
-3. **补充协议**：§9.1 未列 `AudioCapturing` / `ContextCollecting`，实现按 §4.2.2/§4.2.5 职责补充（Phase 2/3），与 §9.1"职责划分与降级语义不得改变"一致。
-4. **Sendable 约束**：§9.1 三协议实现侧加 `Sendable`（Swift 6 严格并发下，@MainActor Pipeline 跨隔离域调用非隔离 async 方法的编译要求）；§9.1 允许"实现时可微调签名"。
-5. **目录结构**（§4.6 对照）：实现新增 `VoxmitAppDelegate.swift`（SwiftUI App 的 AppKit 组合根）、`Pipeline/PipelineClock.swift`、`Pipeline/PlaceholderServices.swift`、`Modules/Permissions/`（FR-G5 在 §4.6 目录树中无位置）、`UI/PermissionOnboardingWindowController.swift`；`Resources/` 与 P1 的 PreviewPanel/HistoryView 未建。
-6. **菜单栏降级入口的禁用条件**：§4.4 仅规定"无输入监控 → 菜单栏点击录音"；实现额外在"无麦克风权限"时禁用该入口（无麦录音无意义，且 keyDown 本会被 canRecord 门控拦截）。
+Phase 0–4 实现中曾记录 7 处与需求文档的偏差（终止态停留位置、输入监控引导 API、补充协议、Sendable 约束、目录结构、降级入口禁用条件、tap 重建提示级别）。**2026-08-18 已全部回写需求文档（v0.4），以实现为准完成对齐，当前无已知偏差。** 后续实现中如出现新偏离，先记录于本节，维护者拍板后回写需求文档，保持"需求唯一事实来源"不漂移。
 
 ---
 
