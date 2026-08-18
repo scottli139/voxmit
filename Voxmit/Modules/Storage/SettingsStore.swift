@@ -19,6 +19,8 @@ enum SettingsKeys {
     static let historyLimit = "history.limit"
     static let historyRetentionDays = "history.retentionDays"
     static let appLaunchAtLogin = "app.launchAtLogin"
+    /// 首次启动权限引导是否已完成（FR-G5；§9.2 之外的 App 内部标记）
+    static let appOnboardingCompleted = "app.onboardingCompleted"
 
     /// 注册 §9.2 默认值（register 仅在键缺失时生效，不覆盖用户已修改的值）。
     ///
@@ -39,6 +41,7 @@ enum SettingsKeys {
             historyLimit: 500,
             historyRetentionDays: 30,
             appLaunchAtLogin: false,
+            appOnboardingCompleted: false,
         ])
     }
 }

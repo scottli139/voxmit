@@ -15,9 +15,20 @@ struct SettingsView: View {
     // 注入
     @AppStorage(SettingsKeys.injectAutoSend) private var injectAutoSend = false
     @AppStorage(SettingsKeys.injectCollapseNewlines) private var injectCollapseNewlines = true
+    @AppStorage(SettingsKeys.audioInputDeviceUID) private var inputDeviceUID: String?
 
     @State private var apiKeyInput = ""
     @State private var hasSavedAPIKey = KeychainHelper.readAPIKey() != nil
+    /// 可用输入设备列表（每次打开设置页时查询）
+    @State private var inputDevices: [InputDeviceInfo] = []
+
+    /// 选择绑定：空串 ↔ nil（nil = 跟随系统默认设备）
+    private var inputDeviceSelection: Binding<String> {
+        Binding(
+            get: { inputDeviceUID ?? "" },
+            set: { inputDeviceUID = $0.isEmpty ? nil : $0 }
+        )
+    }
 
     var body: some View {
         Form {
@@ -26,8 +37,16 @@ struct SettingsView: View {
                 Toggle("登录时启动", isOn: $launchAtLogin)
             }
             Section("音频") {
-                // 占位：输入设备枚举与选择随 AudioCapture（Phase 3）实现，当前固定使用系统默认设备
-                LabeledContent("输入设备", value: "系统默认")
+                Picker("输入设备", selection: inputDeviceSelection) {
+                    Text("系统默认").tag("")
+                    ForEach(inputDevices, id: \.uid) { device in
+                        Text(device.name).tag(device.uid)
+                    }
+                }
+                .onAppear {
+                    inputDevices = InputDeviceCatalog.currentInputDevices()
+                }
+                // 提示音开关（FR-A4）为 P1，随 V1.1 接线
             }
             Section("转写") {
                 Picker("引擎", selection: $asrEngine) {

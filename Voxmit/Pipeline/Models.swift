@@ -4,7 +4,7 @@ import Foundation
 // 实现时可微调签名，但职责划分与降级语义不得改变。
 
 /// 主链路状态（需求文档 §3.4.1）
-enum VoicePipelineState: Sendable {
+enum VoicePipelineState: Sendable, Equatable {
     case idle
     case recording(startedAt: Date)
     case transcribing
@@ -41,20 +41,21 @@ struct VoiceContext: Sendable {
 }
 
 /// 转写引擎抽象（WhisperKit / Speech / 云端可运行时切换，Phase 5 实现）
-protocol TranscriptionEngine {
+/// Sendable：实现会被 @MainActor 的 Pipeline 跨隔离域异步调用
+protocol TranscriptionEngine: Sendable {
     var name: String { get }
     func transcribe(samples: [Float]) async throws -> String
     // P1：func streamingTranscribe(...) -> AsyncThrowingStream<String, Error>
 }
 
 /// Prompt 润色（Phase 6 实现）
-protocol PromptRefining {
+protocol PromptRefining: Sendable {
     /// 超时/失败/未配置 Key 必须在内部回退；refined 标记供 HUD 角标
     func refine(raw: String, context: VoiceContext) async -> (text: String, refined: Bool)
 }
 
 /// 结果注入（Phase 8 实现）
-protocol TextInjecting {
+protocol TextInjecting: Sendable {
     /// 实现内部处理逐级降级；返回值表示最终实际到达的档位
     func inject(text: String, into target: TargetSnapshot, autoSend: Bool) async -> InjectionOutcome
 }
@@ -65,4 +66,20 @@ enum InjectionOutcome: Sendable {
     case axWritten        // AX 写入成功（P1）
     case clipboardOnly    // 降级：仅剪贴板
     case failed(String)
+}
+
+/// 音频采集（Phase 3 实装 AVAudioEngine，需求文档 §4.2.2）
+protocol AudioCapturing {
+    /// 开始采集到内存缓冲（不落盘）；无输入设备/权限被拒等抛错
+    func start() throws
+    /// 停止采集，返回 16kHz 单声道 Float32 样本
+    func stop() -> [Float]
+    /// 放弃本次采集（Esc / 误触取消），丢弃缓冲
+    func cancel()
+}
+
+/// 上下文采集（Phase 7 实装，需求文档 §4.2.5）
+protocol ContextCollecting {
+    /// 热键按下瞬间快照注入目标（§3.4.3）
+    func snapshotTarget() -> TargetSnapshot
 }
