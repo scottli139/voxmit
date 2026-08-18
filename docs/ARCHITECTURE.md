@@ -187,11 +187,15 @@ stateDiagram-v2
 - **发布通道**：`levels: PassthroughSubject<Float, Never>`（dBFS，音频线程发布）、`events: PassthroughSubject<AudioCaptureEvent, Never>`；`onMaxDurationReached` 回调由 VoxmitAppDelegate 接到 `VoicePipeline.handleMaxRecordingDuration()`。
 - **需求依据**：§4.2.2、FR-A1/A2/A3。
 
-### 4.5 TranscriptionEngine —— 转写（规划，Phase 5）
+### 4.5 TranscriptionEngine —— 转写（已实现，Phase 5）
 
-- **协议（已定义，§9.1）**：`TranscriptionEngine: Sendable`（`transcribe(samples:) async throws -> String`）。
-- **现状**：占位实现 `PlaceholderTranscriptionEngine`（`Voxmit/Pipeline/PlaceholderServices.swift`）恒返回空串 → Pipeline 按"空音频"静默结束（§4.2.3）。
-- **规划要点（§4.2.3，不在本文展开）**：WhisperKit small 默认 + Speech 兜底 + 云端可选；模型下载引导（§8-2）；P1 流式转写。
+- **协议（§9.1）**：`TranscriptionEngine: Sendable`（`transcribe(samples:) async throws -> String`）。
+- **实现**（`Voxmit/Modules/Transcription/`）：
+  - `WhisperKitTranscriptionEngine`：默认引擎（FR-C1）；模型就绪后 `activate()` 加载（幂等、并发去重、变体切换重载），`transcribe(audioArray:)` 走 WhisperKit 内部线程；空数组直接返回空串（§4.2.3）。
+  - `SpeechTranscriptionEngine`：Speech 框架兜底（§4.2.3），`requiresOnDeviceRecognition = true` 端侧识别；注意引入第四个 TCC 权限（语音识别，§4.4 矩阵未列，首次使用弹窗）。
+  - `ModelDownloadManager` + `ModelDownloading` 协议：下载状态机（notStarted → downloading(进度) → ready / failed 可重试），下载用 WhisperKit 内置静态方法（swift-transformers Downloader 自带断点续传与 Progress 回调，后台 session），落盘 Application Support/Voxmit/Models。
+  - `TranscriptionEngineResolver`（纯逻辑）+ `TranscriptionEngineRouter`（@unchecked Sendable + NSLock，`use()` 主线程写、`transcribe` 任意线程读）：Pipeline 持有稳定引用，运行时按"设置 + 模型就绪"热切换；模型未就绪自动 Speech 兜底。
+- **规划**：流式转写 FR-C2、自定义词表 FR-C4、云端 ASR FR-C3 均为 P1。
 
 ### 4.6 PromptRefiner —— Prompt 润色（规划，Phase 6）
 
@@ -208,7 +212,7 @@ stateDiagram-v2
 ### 4.8 Injector —— 结果注入（规划，Phase 8）
 
 - **协议（已定义，§9.1）**：`TextInjecting: Sendable`（返回 `InjectionOutcome` 表示实际到达档位）。
-- **现状**：占位 `NoOpTextInjector` 恒报失败。Pipeline 已具备其决策输入：`injectionCapability`（无辅助功能 → 仅剪贴板档）与 `autoSend` 设置闭包（FR-F4 默认关）。
+- **现状**：占位 `PlaceholderClipboardInjector` 仅写剪贴板并返回 `.clipboardOnly`（§4.2.6 降级档提前可用——转写文字松手后即可手动粘贴）。Pipeline 已具备其决策输入：`injectionCapability`（无辅助功能 → 仅剪贴板档）与 `autoSend` 设置闭包（FR-F4 默认关）。
 - **规划要点（§4.2.6）**：剪贴板快照/写入/模拟 Cmd+V/恢复原剪贴板（含 changeCount 竞争保护）、CLI 目标换行折叠、bundleID 适配层。
 
 ### 4.9 Storage —— 设置与密钥（已实现，Phase 0/1）
@@ -275,9 +279,9 @@ sequenceDiagram
     participant VP as VoicePipeline
     participant CC as ContextCollector<br>⚠️ 占位 → Phase 7
     participant AC as AudioCapture
-    participant TE as TranscriptionEngine<br>⚠️ 占位 → Phase 5
+    participant TE as TranscriptionEngineRouter<br>WhisperKit / Speech 兜底（已实现）
     participant PR as PromptRefining<br>⚠️ 占位 → Phase 6
-    participant IJ as TextInjecting<br>⚠️ 占位 → Phase 8
+    participant IJ as TextInjecting<br>⚠️ 占位仅剪贴板档 → Phase 8
     participant HUD as RecordingHUD
 
     Note over HK: keyDown（右 Option，flagsChanged）
@@ -294,11 +298,11 @@ sequenceDiagram
     Note over HK: keyUp（或 5 分钟回调）
     VP->>AC: stop() → [Float]
     VP->>VP: SilenceTrimmer.trimLeadingSilence（去开头静音）
-    VP->>TE: transcribe(samples)（⚠️ 占位返回 ""）
+    VP->>TE: transcribe(samples)（WhisperKit；模型未就绪时 Speech 兜底）
     Note over VP: 空串 → 静默回 idle（§4.2.3）
     VP->>PR: refine(raw, VoiceContext)（旁路则跳过；⚠️ 占位原样返回）
     Note over PR: VoiceContext 分类暂固定 .other → Phase 7
-    VP->>IJ: inject(text, into: target, autoSend)（⚠️ 占位恒失败）
+    VP->>IJ: inject(text, into: target, autoSend)（⚠️ 占位：仅写剪贴板，返回 clipboardOnly）
     Note over IJ: autoSend 读 inject.autoSend 设置（FR-F4）
     VP->>VP: lastInjectionReport = InjectionReport(outcome, wasRefined)
     VP->>HUD: injected / failed → idle

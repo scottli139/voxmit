@@ -69,7 +69,7 @@ final class VoicePipeline: ObservableObject {
         audio: any AudioCapturing = NoOpAudioCapture(),
         transcription: any TranscriptionEngine = PlaceholderTranscriptionEngine(),
         refiner: any PromptRefining = NoOpPromptRefiner(),
-        injector: any TextInjecting = NoOpTextInjector(),
+        injector: any TextInjecting = PlaceholderClipboardInjector(),
         contextCollector: any ContextCollecting = PlaceholderContextCollector(),
         autoSend: @escaping () -> Bool = { UserDefaults.standard.bool(forKey: SettingsKeys.injectAutoSend) }
     ) {

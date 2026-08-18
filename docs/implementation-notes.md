@@ -74,6 +74,14 @@
 - 反馈态数据源：Pipeline 的 `lastInjectionReport: InjectionReport?`（outcome 档位 + wasRefined），在 finish 前赋值（Combine 时序保证 .injected 到达时已可见）；keyDown 清空。"未润色"角标 = injected 且 wasRefined == false（覆盖润色回退与 FR-D4 旁路两种路径）。
 - ViewModel 订阅 `audioCapture.levels`（音频线程发布）必须 `receive(on: DispatchQueue.main)`；Combine sink 进 @MainActor 用 `MainActor.assumeIsolated`（发射源均在主线程，安全）。
 
+### 本地转写（Phase 5，FR-C1）
+
+- **WhisperKit 0.18 API 要点**（读包源码核实，勿凭记忆）：`WhisperKit(_ config:) async throws` + `loadModels()`；转写 `transcribe(audioArray: [Float], decodeOptions:) async throws -> [TranscriptionResult]`（输入即 16kHz Float，正好对接 AudioCapture 产出）；模型下载用静态方法 `WhisperKit.download(variant:downloadBase:useBackgroundSession:progressCallback:)`——**选型结论：用内置下载而非自实现 URLSession**，底层 swift-transformers `Downloader` 自带断点续传（incomplete 文件续传）与 Foundation `Progress` 回调，多文件快照与格式由官方维护；落盘目录约定 `downloadBase/models/argmaxinc/whisperkit-coreml/openai_whisper-<variant>`（HubApi.localRepoLocation）。
+- 落盘校验分层：下载返回目录存在性（管理器）+ `loadModels()` 成功（引擎激活）兜底；不做逐文件哈希。
+- **Swift 6 并发坑两则**：① @MainActor 类不能直接遵守继承了 Sendable 的协议（"conformance crosses into main actor-isolated code"）——Router 这类需要跨域读的持有器改非隔离类 + NSLock（写主线程断言、读任意线程）；② `@Sendable` 闭包参数仍须显式 `@escaping`（函数型参数默认非逃逸）。
+- Speech 兜底引擎引入**第四个 TCC 权限**（语音识别，`NSSpeechRecognitionUsageDescription` 已入 Info.plist）：`SFSpeechRecognizer.authorizationStatus()` notDetermined 时才请求；`requiresOnDeviceRecognition = true` 前查 `supportsOnDeviceRecognition`；识别回调可能多次返回，continuation 需单次 resume 保护 + 取消时映射 CancellationError（Pipeline 的 Esc 路径期望它）。
+- 占位注入改 `PlaceholderClipboardInjector`（仅写剪贴板返回 `.clipboardOnly`）：让转写文字在 Phase 6/8 之前即可手动粘贴使用；NSPasteboard 约定主线程访问（协议非隔离 async 会跳池线程，须 `await MainActor.run`）。
+
 ## 评审期已确认的实现要点
 
 > 2026-08-17 文档评审（v0.2）沉淀；细节均在需求文档对应小节，此处仅作速查指针：

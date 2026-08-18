@@ -94,15 +94,20 @@
 - 2026-08-18：验证全绿——build 成功、test 86 用例通过（63 + 新增 23：可见性矩阵 7 / 波形历史 4 / 提示映射 1 / 视图模型 7 / Pipeline 报告 4）。nonactivating 焦点保持、全屏/多 Space 可见性、各反馈态视觉属真机手动验收项。
 - 2026-08-18：架构设计文档 `docs/ARCHITECTURE.md` 建立（设计意图 + Phase 0–4 as-built 实况；§12 记录与需求文档的偏离点）；AGENTS.md 与 README.md 文档地图同步收录。
 
-### Phase 5: 本地转写 📋 (FR-C1)
+### Phase 5: 本地转写 ✅ (FR-C1)
 
 依赖：Phase 3
 
-- [ ] `TranscriptionEngine` 协议（需求文档 §9.1）+ 引擎注册与运行时切换
-- [ ] WhisperKit 集成：small 模型（~500MB）下载流程（后台 + 进度 + 断点续传 + 落盘校验）+ `transcribe`
-- [ ] Speech 框架兜底引擎（模型下载完成前自动使用）
-- [ ] 空音频 / 纯静音 → 空串静默结束路径
-- [ ] 单测：mock 引擎、下载状态机
+- [x] `TranscriptionEngine` 协议（需求文档 §9.1）+ 引擎注册与运行时切换
+- [x] WhisperKit 集成：small 模型（~500MB）下载流程（后台 + 进度 + 断点续传 + 落盘校验）+ `transcribe`
+- [x] Speech 框架兜底引擎（模型下载完成前自动使用）
+- [x] 空音频 / 纯静音 → 空串静默结束路径
+- [x] 单测：mock 引擎、下载状态机
+
+- 2026-08-18：Phase 5 落地。新增 `Modules/Transcription/`：`WhisperKitTranscriptionEngine`（activate 幂等/并发去重/变体切换重载）、`SpeechTranscriptionEngine`（端侧识别 + 语音识别 TCC 权限）、`ModelDownloadManager` + `ModelDownloading` 协议（状态机 notStarted→downloading(进度)→ready/failed 可重试；下载用 WhisperKit 内置静态方法，swift-transformers Downloader 自带断点续传与 Progress 回调、后台 session，落盘 Application Support/Voxmit/Models）、`TranscriptionEngineResolver` 纯决策 + `TranscriptionEngineRouter` 运行时热切换（模型未就绪自动 Speech 兜底）。
+- 2026-08-18：配套改动——占位注入由"恒失败"改为 `PlaceholderClipboardInjector`（仅写剪贴板返回 clipboardOnly 档，转写文字松手后即可手动粘贴，完整注入 Phase 8）；`Info.plist` 新增 `NSSpeechRecognitionUsageDescription`（Speech 兜底引入第四个 TCC 权限，§4.4 矩阵未列，首次使用弹窗）；设置页转写区新增当前引擎显示与模型下载进度/重试。
+- 2026-08-18：坑——@MainActor 类无法直接遵守 Sendable 协议（"conformance crosses into main actor-isolated code"），Router 改非隔离 + NSLock（use 主线程写/任意线程读）；`@Sendable` 闭包参数仍需显式 `@escaping`；WhisperKit 0.18 API：`WhisperKit(config:) async throws` + `loadModels()` + `transcribe(audioArray:)` + `static download(variant:downloadBase:useBackgroundSession:progressCallback:)`。
+- 2026-08-18：验证全绿——build 成功、test 108 用例通过（97 + 新增 11：引擎决策 4 / 下载状态机 6 / 路由器 1）。真实下载 ~500MB 模型、WhisperKit 转写质量、Speech 兜底识别、权限弹窗属真机手动验收项。
 
 ### Phase 6: Prompt 润色 📋 (FR-D1, FR-D4)
 

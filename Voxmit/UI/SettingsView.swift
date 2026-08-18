@@ -3,6 +3,10 @@ import SwiftUI
 /// 设置页骨架（Phase 0）：分区对应需求文档 §9.2 设置项清单。
 /// 仅负责设置值的读写与展示，各功能的实际接线在对应 Phase 完成。
 struct SettingsView: View {
+    /// 模型下载状态（Phase 5 转写区展示）
+    @ObservedObject var modelDownloadManager: ModelDownloadManager
+    /// 当前生效引擎展示
+    @ObservedObject var transcriptionRouter: TranscriptionEngineRouter
     // 通用
     @AppStorage(SettingsKeys.appLaunchAtLogin) private var launchAtLogin = false
     // 热键
@@ -30,6 +34,40 @@ struct SettingsView: View {
             get: { inputDeviceUID ?? "" },
             set: { inputDeviceUID = $0.isEmpty ? nil : $0 }
         )
+    }
+
+    /// 模型下载状态区（FR-C1：small 约 500MB，后台下载 + 断点续传 + 落盘校验）
+    @ViewBuilder
+    private var modelStatusView: some View {
+        switch modelDownloadManager.state {
+        case .notStarted:
+            Text("本地模型未下载；下载完成前由 Speech（系统）兜底转写")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .downloading(let progress):
+            HStack {
+                ProgressView(value: progress)
+                Text("\(Int(progress * 100))%")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("正在下载本地模型（small 约 500MB，可断点续传）…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .ready:
+            Text("本地模型已就绪")
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .failed(let message):
+            HStack {
+                Text("模型下载失败：\(message)")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                Button("重试") {
+                    modelDownloadManager.startDownloadIfNeeded()
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -78,6 +116,12 @@ struct SettingsView: View {
                     Text("small").tag("small")
                     Text("large-v3").tag("large-v3")
                 }
+                // 当前生效引擎：模型未就绪/未下载时 Speech 兜底（§4.2.3）
+                LabeledContent(
+                    "当前引擎",
+                    value: transcriptionRouter.current.name == "whisperkit" ? "WhisperKit（本地）" : "Speech（系统）"
+                )
+                modelStatusView
             }
             Section("LLM 润色") {
                 Toggle("启用润色（关闭后全局直出原文）", isOn: $llmRefineEnabled)
@@ -112,5 +156,15 @@ struct SettingsView: View {
 }
 
 #Preview {
-    SettingsView()
+    // 预览用真实实例（init 无副作用：不下载、不识别）
+    let speech = SpeechTranscriptionEngine()
+    return SettingsView(
+        modelDownloadManager: ModelDownloadManager(
+            downloader: WhisperKitModelDownloader(
+                variantProvider: { "small" },
+                downloadBase: VoxmitAppDelegate.modelsDirectory
+            )
+        ),
+        transcriptionRouter: TranscriptionEngineRouter(current: speech)
+    )
 }

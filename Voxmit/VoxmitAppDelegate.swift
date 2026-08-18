@@ -10,8 +10,11 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
     let permissionManager = PermissionManager()
     /// 音频采集（Phase 3 实装）；注入 Pipeline 替换 Phase 2 的 NoOp 占位
     let audioCapture = AudioCapture(maxDuration: VoicePipeline.maximumRecordingDuration)
-    /// lazy：依赖 audioCapture，且避免 @MainActor 类显式 override init 的隔离问题
-    private(set) lazy var pipeline = VoicePipeline(audio: audioCapture)
+    /// lazy：依赖 audioCapture 与转写路由器，且避免 @MainActor 类显式 override init 的隔离问题
+    private(set) lazy var pipeline = VoicePipeline(
+        audio: audioCapture,
+        transcription: transcriptionRouter
+    )
 
     /// 权限自检引导窗口；完成（含「跳过，降级运行」）时写入 UserDefaults 标记
     private lazy var onboardingController = PermissionOnboardingWindowController(
@@ -29,6 +32,40 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
 
     /// 录音 HUD（Phase 4）：非激活面板，不抢焦点；多 Space/全屏可见
     private lazy var hudController = RecordingHUDController(pipeline: pipeline, audioCapture: audioCapture)
+
+    // MARK: - 转写（Phase 5：FR-C1）
+
+    /// 模型存放目录：Application Support/Voxmit/Models（模型文件已被 .gitignore 排除）
+    static var modelsDirectory: URL {
+        let directory = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Voxmit/Models", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    /// 模型下载管理器（small ≈ 500MB；变体随 asr.modelVariant 设置）
+    private(set) lazy var modelDownloadManager = ModelDownloadManager(
+        downloader: WhisperKitModelDownloader(
+            variantProvider: { UserDefaults.standard.string(forKey: SettingsKeys.asrModelVariant) ?? "small" },
+            downloadBase: Self.modelsDirectory
+        )
+    )
+
+    /// Speech 框架兜底引擎（模型就绪前/显式选择时）
+    private let speechEngine = SpeechTranscriptionEngine()
+
+    /// WhisperKit 引擎（模型就绪后激活）
+    private(set) lazy var whisperKitEngine = WhisperKitTranscriptionEngine(
+        modelFolderProvider: { [weak self] in await self?.modelDownloadManager.modelFolder }
+    )
+
+    /// 引擎路由器：Pipeline 持有的稳定引用，运行时热切换
+    private(set) lazy var transcriptionRouter = TranscriptionEngineRouter(current: speechEngine)
+
+    /// 引擎切换观察（模型就绪/设置变更）
+    private var engineStateCancellable: AnyCancellable?
+    private var engineDefaultsObserver: (any NSObjectProtocol)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 单测以 App 为宿主运行（TEST_HOST）：不弹引导窗口、不做权限同步接线，
@@ -58,6 +95,26 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
         // 录音 HUD：订阅状态机与电平，自动出现/隐藏
         _ = hudController
 
+        // 转写引擎（Phase 5）：按"设置 + 模型就绪"路由（模型未就绪时 Speech 兜底，§4.2.3），
+        // 并后台启动模型下载（断点续传，~500MB）
+        recomputeTranscriptionEngine()
+        modelDownloadManager.startDownloadIfNeeded()
+        engineStateCancellable = modelDownloadManager.$state.sink { [weak self] _ in
+            Task { @MainActor in self?.recomputeTranscriptionEngine() }
+        }
+        engineDefaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: UserDefaults.standard,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                // 引擎/模型规格变更：重估就绪状态并按需重启下载
+                self?.modelDownloadManager.reevaluate()
+                self?.recomputeTranscriptionEngine()
+                self?.modelDownloadManager.startDownloadIfNeeded()
+            }
+        }
+
         // 首次启动且权限未集齐 → 自动展示权限自检页（§4.4：麦克风 → 输入监控 → 辅助功能）
         let completed = UserDefaults.standard.bool(forKey: SettingsKeys.appOnboardingCompleted)
         if PermissionManager.shouldPresentOnboarding(
@@ -72,5 +129,27 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
     func showPermissionOnboarding() {
         permissionManager.refresh()
         onboardingController.show()
+    }
+
+    /// 引擎路由决策（TranscriptionEngineResolver 纯逻辑）：whisperkit 需模型就绪并先激活，
+    /// 激活失败保持 Speech 兜底
+    private func recomputeTranscriptionEngine() {
+        let setting = UserDefaults.standard.string(forKey: SettingsKeys.asrEngine) ?? "whisperkit"
+        let ready = modelDownloadManager.state.isReady
+        switch TranscriptionEngineResolver.resolve(setting: setting, modelReady: ready) {
+        case .speech:
+            transcriptionRouter.use(speechEngine)
+        case .whisperKit:
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await whisperKitEngine.activate()
+                    transcriptionRouter.use(whisperKitEngine)
+                } catch {
+                    // 模型加载失败：保持 Speech 兜底，用户可在设置页看到当前引擎
+                    transcriptionRouter.use(speechEngine)
+                }
+            }
+        }
     }
 }

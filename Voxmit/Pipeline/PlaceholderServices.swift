@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 // 下游模块占位实现：Phase 2 状态机接线用，随对应 Phase 替换为真实实现。
@@ -23,10 +24,17 @@ struct NoOpPromptRefiner: PromptRefining {
     }
 }
 
-/// 占位注入（Phase 8 实装）：不执行任何注入，恒报失败
-struct NoOpTextInjector: TextInjecting {
+/// 占位注入（Phase 8 实装完整流程）：仅写入剪贴板并返回 clipboardOnly 档——
+/// 转写文字即刻可手动 Cmd+V 使用（需求文档 §4.2.6 降级档）。
+/// 完整流程（剪贴板快照/恢复 + 模拟 Cmd+V + FR-F4 回车）在 Phase 8 替换本实现。
+struct PlaceholderClipboardInjector: TextInjecting {
     func inject(text: String, into target: TargetSnapshot, autoSend: Bool) async -> InjectionOutcome {
-        .failed("注入尚未实现（Phase 8）")
+        // NSPasteboard 约定主线程访问
+        await MainActor.run {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+        return .clipboardOnly
     }
 }
 

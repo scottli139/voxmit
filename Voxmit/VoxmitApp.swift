@@ -23,7 +23,10 @@ struct VoxmitApp: App {
         .menuBarExtraStyle(.menu)
 
         Settings {
-            SettingsView()
+            SettingsView(
+                modelDownloadManager: appDelegate.modelDownloadManager,
+                transcriptionRouter: appDelegate.transcriptionRouter
+            )
         }
     }
 }
