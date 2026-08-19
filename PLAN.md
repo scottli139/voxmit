@@ -157,16 +157,19 @@
 - 2026-08-19：预算二次放宽（需求 v0.10，实测数据驱动）——curl api.moonshot.cn 实测 TLS 握手 2.3~2.7s、冷连接 chat 3.8~5.0s、热连接 1.2~2.9s；发现初版预热 2s 超时比握手还短、从未成功（日志实证每次超时）——教训"预热超时必须大于握手时间"：预热超时 2s→8s；润色预算 4.3s→7.3s（3.5+0.3+3.5：冷连接首试 3.5s 内握手入池、重试热连接 2.9s<3.5s 兜底）。需求文档 v0.9→v0.10（§4.2.4/§1.3 同步、变更记录含实测依据），ARCHITECTURE/implementation-notes/USER_GUIDE 同步。单测 +2（228 总：预热超时常量断言 + 预算常量断言），build/test 全绿。
 - 2026-08-19：润色 System Prompt v0.11 防脑补（需求 §9.1 模板 5 条→6 条）——真机反馈：Notes（.other 类）口述唐诗被脑补成"打开窗口、创建新笔记"操作指令（上下文被当作操作对象）。新模板加三条硬约束：上下文仅供指代消解、禁止脑补未口述操作、非工程口述只做通顺化。教训：LLM 行为只能靠模板约束（模板断言进单测防回归），效果靠真机验收。
 
-### Phase 8: 结果注入 📋 (FR-F1, FR-F4, FR-F5)
+### Phase 8: 结果注入 ✅ (FR-F1, FR-F4, FR-F5)
 
 依赖：Phase 7
 
-- [ ] ClipboardInjector 主流程：剪贴板快照 → 写入文本 → `CGEventPost` Cmd+V → ~300ms 后恢复原剪贴板
-- [ ] `changeCount` 竞争保护：用户复制了新内容则放弃恢复
-- [ ] 辅助功能权限缺失 / 目标不可编辑 → 仅剪贴板 + HUD 提示"已复制，Cmd+V 手动粘贴"
-- [ ] 换行折叠（CLI 目标默认折叠为空格）+ bundleID 注入适配层配置表
-- [ ] FR-F4 自动发送开关（默认关）：粘贴后 ~150ms 模拟 Return
-- [ ] 单测：注入决策与全部降级路径
+- [x] ClipboardInjector 主流程：剪贴板快照 → 写入文本 → `CGEventPost` Cmd+V → ~300ms 后恢复原剪贴板
+- [x] `changeCount` 竞争保护：用户复制了新内容则放弃恢复
+- [x] 辅助功能权限缺失 / 目标不可编辑 → 仅剪贴板 + HUD 提示"已复制，Cmd+V 手动粘贴"
+- [x] 换行折叠（CLI 目标默认折叠为空格）+ bundleID 注入适配层配置表
+- [x] FR-F4 自动发送开关（默认关）：粘贴后 ~150ms 模拟 Return
+- [x] 单测：注入决策与全部降级路径
+
+- 2026-08-19：Phase 8 落地。新增 `Modules/Injector/InjectionAdapter.swift`（纯逻辑：换行折叠决策与实现）与 `Modules/Injector/ClipboardInjector.swift`（`PasteboardManaging`/`KeyEventPosting` 系统抽象协议 + `ClipboardInjector` 实装 + `SystemPasteboardManager`/`SystemKeyEventPoster` 真实系统服务）；`VoxmitAppDelegate` 注入替换占位；`PlaceholderClipboardInjector` 注释更新为仅作默认占位。
+- 2026-08-19：Phase 8 设计要点——剪贴板快照→写入→CGEventPost Cmd+V→约 300ms 后按 changeCount 竞争保护恢复；无 AX 权限/pid 0/空 bundleID 降级仅写剪贴板且不恢复（文本留存供手动粘贴）；CLI 目标（terminal）默认折叠换行为空格（`inject.collapseNewlines` 默认 true）；FR-F4 自动发送默认关（`inject.autoSend`），粘贴后约 150ms 模拟 Return；取消分支尽力恢复剪贴板避免污染、取消时跳过 autoSend。NSPasteboard 全部 MainActor.run（协议非隔离 async 跳池线程，沿用 Phase 5 占位教训）。单测 +12（240 总），build/test 全绿。
 
 ### Phase 9: 联调与 MVP 验收 📋
 

@@ -167,6 +167,18 @@
 - **「无上下文」模式**：前台取不到时 TargetSnapshot 为 pid 0 + 空标识；`RefinePrompt.userMessage` 对空 appName 省略整个【上下文】块（§4.2.5：润色仅做句式整理），避免向 LLM 发送"当前 App：（）"的畸形上下文。
 - **AppCategoryMapper 纯表定位**：分类表放 Context 模块但由 Pipeline 直接调用（纯函数无需 mock），不进 `ContextCollecting` 协议（协议不膨胀）；AI CLI 无独立 bundleID，归宿主终端分类（注入适配 Phase 8 复用此表）。
 
+### 结果注入（Phase 8，FR-F1/FR-F4/FR-F5）
+
+- **NSPasteboard 主线程访问**：`TextInjecting.inject` 是非隔离 async（协作线程池执行），NSPasteboard 约定主线程——`SystemPasteboardManager` 全部方法 `await MainActor.run`（沿用 Phase 5 占位注入的教训，见本地转写节）。
+- **剪贴板快照/恢复**：`pasteboardItems`（nullable，Swift 侧 `[NSPasteboardItem]?`，SDK 头文件确认）快照后 `writeObjects(items)` 恢复；`clearContents` 不会使已保存的 NSPasteboardItem 失效（对象独立于 pasteboard）。
+- **changeCount 竞争保护（§4.2.6）**：capture 存 items，write 返回写入后的 changeCount，restore 前比对当前 changeCount——不等（用户复制了新内容）则放弃恢复并丢弃快照，绝不覆盖用户新内容。注意比对的是 write 后的 changeCount（非 capture 的），因为 write 会使 changeCount +1。
+- **降级语义关键**：`clipboardOnly` 档只 write、**不 capture 不 restore**——文本必须留在剪贴板供手动 Cmd+V，若恢复原剪贴板会导致用户粘贴失败。这与完整流程的"恢复"语义相反，容易写错。
+- **CGEvent 模拟按键需辅助功能权限**（非输入监控，§4.4 误区）：`CGEventPost` 无权限时静默失败不报错，故注入前必须 `AXIsProcessTrusted()` 预检，失败直接降级仅剪贴板（不做无效 Cmd+V）。Cmd+V = virtualKey 0x09 + `.maskCommand`；Return = 0x24；source 用 `.combinedSessionState`，post 到 `.cghidEventTap`，keyDown+keyUp 成对发。
+- **模拟按键重入 event tap 回调崩溃（2026-08-19 真机 SIGSEGV）**：`CGEventPost` 模拟的 keyDown 会经 RunLoop source 异步投递回 HotkeyManager 的 listen-only tap（mask 含 keyDown），回调 `hotkeyEventTapCallback` 无条件 `MainActor.assumeIsolated`——此重入路径下 Swift 运行时的当前执行器跟踪失效，`assumeIsolated` → `swift_task_isMainExecutorImpl` → `swift_getObjectType` 野指针崩溃（EXC_BAD_ACCESS）。修法：回调里对 `keyDown && keyCode != Esc(0x35)` 直接放行、不进 MainActor 隔离域（tap 只关心 flagsChanged 热键与 Esc，其余 keyDown 无意义）。教训：CGEventPost 的副作用会回到自己的事件监听 tap，listen-only 回调要按事件类型做最小过滤，不要对每个事件都 `assumeIsolated`。
+- **取消分支的剪贴板恢复**：注入器内 sleep 被取消（Esc）时仍要尽力 restore（剪贴板已写入新文本，不恢复会污染用户剪贴板），但跳过 autoSend（Return）；`TextInjecting.inject` 签名不 throws，取消由上层 Pipeline 的 `Task.checkCancellation()` 收尾，注入器吞掉 sleep 的 CancellationError 返回即可。
+- **换行折叠（§4.2.6）**：仅 terminal 目标且 `inject.collapseNewlines` 开启时折叠；折叠 = `\r\n`/`\n`/`\r` 全部替换为单个空格（不压缩其他空白，忠实原文，防止英文多空格语义变化）。决策在 `InjectionAdapter`（纯逻辑可单测），分类复用 `AppCategoryMapper`。
+- **「目标不可注入」的检测边界（P0）**：仅做 AX 权限 + pid != 0 + bundleID 非空三条件；"目标 App 注入瞬间退出"的竞态 CGEventPost 无返回值无法可靠检测（事件发到届时前台 App），列入真机验证项而非代码兜底。
+
 ### Prompt 润色（Phase 6，FR-D1/FR-D4）
 
 - **预算分配（v0.10 二次放宽）**：§4.2.4 总预算 3s→4.3s→7.3s（3.5+0.3+3.5）。第二次放宽的实测依据（本机 curl api.moonshot.cn）：DNS 0.66s、TCP 1.30s、TLS 握手 2.3~2.7s、冷连接 chat 3.8~5.0s、热连接纯服务端处理 1.2~2.9s——冷连接首试 3.5s 内握手完成并入池，重试走热连接 2.9s < 3.5s 兜底成功。机制不变：`withThrowingTaskGroup` 竞速，常量集中在 `PromptRefiner.firstAttemptTimeout/retryBackoff/retryAttemptTimeout`。

@@ -5,7 +5,7 @@
 >
 > 引用约定：`§x.y` 指 `语音编程工具-需求分析与方案说明.md` 对应小节；`FR-xN` 指其中的需求编号。需求文档是唯一事实来源，本文与其冲突时以需求文档为准并回改本文。
 >
-> 实现状态基线：2026-08-18，Phase 0–4 已完成（`PLAN.md`），单测 86 用例全绿。
+> 实现状态基线：2026-08-19，Phase 0–8 已完成（`PLAN.md`），单测 240 用例全绿。
 
 ## 目录
 
@@ -42,10 +42,10 @@ flowchart TB
         AC["AudioCapture<br>音频采集（已实现）"]
         PM["PermissionManager<br>权限自检（已实现）"]
         ST["Storage<br>设置 / Keychain（已实现）"]
-        TE["TranscriptionEngine<br>（规划，Phase 5）"]
-        PR["PromptRefiner<br>（规划，Phase 6）"]
-        CC["ContextCollector<br>（规划，Phase 7）"]
-        IJ["Injector<br>（规划，Phase 8）"]
+        TE["TranscriptionEngine<br>（已实现）"]
+        PR["PromptRefiner<br>（已实现）"]
+        CC["ContextCollector<br>（已实现）"]
+        IJ["Injector<br>（已实现）"]
     end
     subgraph SYS["系统 API 层"]
         SA["CGEventTap · AVAudioEngine / AVAudioConverter · AVFoundation(TCC)<br>CoreAudio · ApplicationServices(AX) · UserDefaults · Keychain"]
@@ -82,6 +82,7 @@ VoicePipeline 只面向协议编程，系统实现（`AudioCapture`、未来的 
 | 音频 | `AudioProcessing.swift`：电平/静音裁剪/重采样/设备决策 | `AudioCapture` 的 engine 生命周期 |
 | 权限 | `PermissionSnapshot` 降级决策 | `SystemPermissionChecker` 的 TCC 调用 |
 | HUD | `HUDVisibility` 停留决策、`LevelHistory` | `RecordingHUDController` 的 NSPanel |
+| 注入 | `InjectionAdapter`（换行折叠决策/实现） | `ClipboardInjector` 的 CGEvent/NSPasteboard 薄壳 |
 
 ### 2.4 时钟注入
 
@@ -218,11 +219,16 @@ stateDiagram-v2
 - **松手时前台校验（§3.4.3）**：`handleHotkeyUp` 再快照一次，与 keyDown 快照不同（bundleID 或 pid 变化）→ NOTICE 打点并**以松手时前台为准**（注入目标与润色上下文均用新快照）；Pipeline 的 VoiceContext.appCategory 由 AppCategoryMapper 真实分类（替换 .other 硬编码）。
 - **需求依据**：§4.2.5、§3.4.3、FR-E1、FR-F5。选区文本（FR-E2）、AI CLI 识别（FR-E3）为 P1/P2 未做。
 
-### 4.8 Injector —— 结果注入（规划，Phase 8）
+### 4.8 Injector —— 结果注入（已实现，Phase 8）
 
-- **协议（已定义，§9.1）**：`TextInjecting: Sendable`（返回 `InjectionOutcome` 表示实际到达档位）。
-- **现状**：占位 `PlaceholderClipboardInjector` 仅写剪贴板并返回 `.clipboardOnly`（§4.2.6 降级档提前可用——转写文字松手后即可手动粘贴）。Pipeline 已具备其决策输入：`injectionCapability`（无辅助功能 → 仅剪贴板档）与 `autoSend` 设置闭包（FR-F4 默认关）。
-- **规划要点（§4.2.6）**：剪贴板快照/写入/模拟 Cmd+V/恢复原剪贴板（含 changeCount 竞争保护）、CLI 目标换行折叠、bundleID 适配层。
+- **协议（§9.1）**：`TextInjecting: Sendable`（`inject(text:into:autoSend:) async -> InjectionOutcome`）。
+- **实现**（`Voxmit/Modules/Injector/`）：
+  - `ClipboardInjector`：P0 剪贴板 + 模拟 Cmd+V——快照剪贴板 → 写入文本 → `CGEventPost` 模拟 Cmd+V → 约 300ms 后按 `changeCount` 竞争保护恢复原剪贴板；无辅助功能权限 / pid 0 / 空 bundleID 降级为仅写剪贴板（文本留存供手动粘贴，不恢复）；`autoSend`（FR-F4，默认关）时再约 150ms 模拟 Return；取消分支尽力恢复剪贴板、跳过 autoSend。
+  - `InjectionAdapter`（纯逻辑）：换行折叠决策（仅 terminal 且 `inject.collapseNewlines` 开启）与实现（`\r\n`/`\n`/`\r` → 空格，不压缩其他空白）。
+  - 系统抽象（mock 友好）：`PasteboardManaging`（capture/write/restore，NSPasteboard 全部 `MainActor.run`）、`KeyEventPosting`（postPaste/postReturn，CGEvent 合成 Cmd+V 0x09 / Return 0x24）；真实实现 `SystemPasteboardManager`（`pasteboardItems` 快照 + `writeObjects` 恢复）/ `SystemKeyEventPoster`。
+- **接线**：`VoxmitAppDelegate` 注入替换 `PlaceholderClipboardInjector`（占位保留为 Pipeline 默认值）；日志 category `.injection`，只记目标 App 名与字数，不落文本本体。
+- **规划**：AX 直接写入（`.axWritten`，`AXSelectedText` 光标处插入，禁止 `AXValue`）、CLI stdin 直通（FR-F2）、预览浮层（FR-F3）均为 P1 未做。
+- **需求依据**：§4.2.6、§3.4.3、FR-F1、FR-F4、FR-F5。
 
 ### 4.9 Storage —— 设置与密钥（已实现，Phase 0/1）
 
@@ -279,23 +285,23 @@ flowchart LR
 
 ## 6. 端到端数据流
 
-一次完整按键 → 注入的数据流（占位环节以 ⚠️ 标注，待对应 Phase 替换）：
+一次完整按键 → 注入的数据流（全链路已实现，Phase 0–8）：
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant HK as HotkeyEventParser
     participant VP as VoicePipeline
-    participant CC as ContextCollector<br>⚠️ 占位 → Phase 7
+    participant CC as ContextCollector<br>RealContextCollector（已实现）
     participant AC as AudioCapture
     participant TE as TranscriptionEngineRouter<br>WhisperKit / Speech 兜底（已实现）
-    participant PR as PromptRefining<br>⚠️ 占位 → Phase 6
-    participant IJ as TextInjecting<br>⚠️ 占位仅剪贴板档 → Phase 8
+    participant PR as PromptRefining<br>PromptRefiner（已实现）
+    participant IJ as TextInjecting<br>ClipboardInjector（已实现）
     participant HUD as RecordingHUD
 
     Note over HK: keyDown（右 Option，flagsChanged）
     HK->>VP: .hotkeyDown(bypassActive)
-    VP->>CC: snapshotTarget() → TargetSnapshot（⚠️ 占位空快照）
+    VP->>CC: snapshotTarget() → TargetSnapshot（keyDown 快照，§3.4.3）
     VP->>AC: start()（权限/设备检查 → engine+tap 启动）
     Note over VP: skipRefinement = bypassActive（FR-D4）
     VP->>VP: 200ms 确认期 → recording
@@ -309,9 +315,9 @@ sequenceDiagram
     VP->>VP: SilenceTrimmer.trimLeadingSilence（去开头静音）
     VP->>TE: transcribe(samples)（WhisperKit；模型未就绪时 Speech 兜底）
     Note over VP: 空串 → 静默回 idle（§4.2.3）
-    VP->>PR: refine(raw, VoiceContext)（旁路则跳过；⚠️ 占位原样返回）
-    Note over PR: VoiceContext 分类暂固定 .other → Phase 7
-    VP->>IJ: inject(text, into: target, autoSend)（⚠️ 占位：仅写剪贴板，返回 clipboardOnly）
+    VP->>PR: refine(raw, VoiceContext)（旁路则跳过；真实润色）
+    Note over PR: VoiceContext 分类由 AppCategoryMapper 真实分类（Phase 7）
+    VP->>IJ: inject(text, into: target, autoSend)（快照→写入→Cmd+V→恢复；无 AX/无效目标降级仅剪贴板）
     Note over IJ: autoSend 读 inject.autoSend 设置（FR-F4）
     VP->>VP: lastInjectionReport = InjectionReport(outcome, wasRefined)
     VP->>HUD: injected / failed → idle
@@ -328,7 +334,7 @@ sequenceDiagram
 |---|---|---|---|
 | 麦克风 | `AVCaptureDevice.authorizationStatus(for: .audio)` | 录音（硬阻塞） | keyDown 直接 failed；菜单降级入口禁用；权限自检页强制引导（已实现） |
 | 输入监控 | `CGPreflightListenEventAccess()` | 全局热键（listen-only tap） | HotkeyManager 不建/停 tap；菜单栏"开始/停止录音"点击入口接管（已实现） |
-| 辅助功能 | `AXIsProcessTrusted()` | 模拟按键注入、AX 上下文 | `injectionCapability = .clipboardOnly`（已实现决策；注入降级行为随 Phase 8 落地）；自检页可"跳过，降级运行"（已实现） |
+| 辅助功能 | `AXIsProcessTrusted()` | 模拟按键注入、AX 上下文 | `injectionCapability = .clipboardOnly`（决策已实现；注入降级 = 仅剪贴板 + HUD 提示手动粘贴，Phase 8 落地）；自检页可"跳过，降级运行"（已实现） |
 
 数据流：`SystemPermissionChecker` → `PermissionManager.refresh()` → `@Published snapshot` →（VoxmitAppDelegate Combine 接线）→ `VoicePipeline.applyPermissionSnapshot` + HotkeyManager 启停 + 菜单/HUD 展示。运行中变化即刻生效：权限补齐 → 热键自动恢复；撤销 → tap 自动停止。event tap 被系统回收后的"提示"（§4.4"自动重建并提示"）暂未做用户可见通道，自动重建已实现。
 
@@ -347,11 +353,11 @@ sequenceDiagram
 | 环节 | 预算 | 架构落点 | 现状 |
 |---|---|---|---|
 | 停止录音 + 缓冲落内存 | ≤ 50 ms | `AudioCapture.stop()`（内存数组移交，无 I/O） | 已实现 |
-| 本地转写（WhisperKit small） | ≤ 900 ms | `TranscriptionEngine` | 规划 Phase 5 |
-| 上下文采集 | ≤ 100 ms（与转写并行） | `ContextCollecting.snapshotTarget()` | 占位 → Phase 7 |
-| LLM 润色（含重试） | ≤ 800 ms（总超时 3s 回退） | `PromptRefining` | 规划 Phase 6 |
-| 注入（剪贴板 + Cmd+V） | ≤ 200 ms | `TextInjecting` | 规划 Phase 8 |
-| **串行合计** | **≈ 1.95 s** | — | 润色超时回退时最坏 ≈ 4s，HUD 需状态提示（已实现） |
+| 本地转写（WhisperKit small） | ≤ 900 ms | `TranscriptionEngine` | 已实现（Phase 5） |
+| 上下文采集 | ≤ 100 ms（与转写并行） | `ContextCollecting.snapshotTarget()` | 已实现（Phase 7） |
+| LLM 润色（含重试） | ≤ 800 ms（总超时 7.3s 回退） | `PromptRefining` | 已实现（Phase 6） |
+| 注入（剪贴板 + Cmd+V） | ≤ 200 ms | `TextInjecting` | 已实现（Phase 8） |
+| **串行合计** | **≈ 1.95 s** | — | 润色超时回退时最坏 ≈ 7.3s，HUD 需状态提示（已实现） |
 
 常驻指标（§3.2）：内存 ≤ 300 MB（模型加载后 ≤ 1.5 GB）、空闲 CPU ≈ 0——架构上的保证：无常驻轮询（HUD 停留/看门狗均为一次性计时；权限自检页轮询仅在窗口可见期间；电平发布仅在录音期间）；engine 每次录音重建、结束即释放。
 
@@ -359,7 +365,7 @@ sequenceDiagram
 
 ## 10. 目录结构
 
-现状树（as-built，Phase 0–4）：
+现状树（as-built，Phase 0–8）：
 
 ```
 Voxmit.xcodeproj  # objectVersion 70，文件系统同步分组（新增源码免改 pbxproj）
@@ -371,21 +377,25 @@ Voxmit/
 │   ├── Models.swift  # §9.1 契约 + 状态/快照/上下文/报告 + 协议（含实现期补充协议）
 │   ├── VoicePipeline.swift  # 状态机协调器（§4.2.0）
 │   ├── PipelineClock.swift  # 时钟协议 + 真实时钟（实现期新增）
-│   └── PlaceholderServices.swift  # 下游 no-op 占位（随 Phase 5–8 逐个退役）
+│   └── PlaceholderServices.swift  # 下游 no-op 占位（仅作未接线/测试默认值）
 ├── Modules/
-│   ├── Permissions/PermissionManager.swift  # FR-G5（§4.6 目录树未列，实现期新增）
+│   ├── Permissions/PermissionManager.swift  # FR-G5
 │   ├── Hotkey/HotkeyManager.swift  # §4.2.1
-│   ├── Audio/AudioCapture.swift  # §4.2.2（engine 与系统交互）
-│   ├── Audio/AudioProcessing.swift  # 纯逻辑层（电平/裁剪/重采样/设备决策）
+│   ├── Audio/AudioCapture.swift + AudioProcessing.swift  # §4.2.2
+│   ├── Transcription/  # §4.2.3（WhisperKit / Speech / 下载器）
+│   ├── Refiner/  # §4.2.4（LLMClient / PromptRefiner / LLMPrewarmer）
+│   ├── Context/RealContextCollector.swift  # §4.2.5（AppCategoryMapper）
+│   ├── Injector/InjectionAdapter.swift + ClipboardInjector.swift  # §4.2.6
+│   ├── Diagnostics/  # 日志导出（Phase 5 末）
 │   └── Storage/SettingsStore.swift + KeychainHelper.swift
 └── UI/
     ├── SettingsView.swift
     ├── PermissionOnboardingView.swift + PermissionOnboardingWindowController.swift
     └── RecordingHUD.swift
-VoxmitTests/  # 6 个测试文件 + Mocks/（详见 §11）
+VoxmitTests/  # 测试文件 + Mocks/（详见 §11）
 ```
 
-§4.6 规划对照（需求文档 v0.4 已将目录树对齐为 as-built 现状）：`Modules/Transcription|Refiner|Context|Injector` 子目录随 Phase 5–8 建立；`UI/PreviewPanel.swift` / `HistoryView.swift` 为 P1；`Resources/` 随需要建立。
+§4.6 规划对照：`Modules/Transcription|Refiner|Context|Injector` 已随 Phase 5–8 建立；`UI/PreviewPanel.swift` / `HistoryView.swift` 为 P1；`Resources/` 随需要建立。
 
 ## 11. 测试架构
 
@@ -396,10 +406,11 @@ VoxmitTests/  # 6 个测试文件 + Mocks/（详见 §11）
 | Mock | 被测目标 |
 |---|---|
 | `MockPermissionChecker`（`MockPermissionChecker.swift`） | PermissionManager 行为、降级矩阵、首启判定、深链常量 |
-| `MockClock`（`MockPipelineServices.swift`，锁保护虚拟时钟） | 全部时序：200ms/300ms/5 分钟/HUD 停留/看门狗 |
+| `MockClock`（`MockPipelineServices.swift`，锁保护虚拟时钟） | 全部时序：200ms/300ms/5 分钟/HUD 停留/看门狗/注入 300ms 恢复 |
 | `MockAudioCapture` / `MockTranscriptionEngine` / `MockRefiner` / `MockInjector` / `MockContextCollector` | 状态机全路径、处理链、注入报告、HUD 视图模型 |
+| `MockPasteboard` / `MockKeyEventPoster`（`MockInjectorServices.swift`） | ClipboardInjector 降级/完整流程/换行折叠/剪贴板 changeCount 竞争 |
 
-**覆盖统计（86 用例全绿）**：状态机时序 22（含注入报告与裁剪接线）、音频纯逻辑 20（电平/裁剪/重采样/设备决策/看门狗）、HUD 19（可见性/波形历史/提示映射/视图模型）、权限 16（快照矩阵/管理器/首启/Pipeline 标记/默认值）、热键解析器 7、设置默认值与 Pipeline 初始状态 2。
+**覆盖统计（240 用例全绿，Phase 0–8）**：状态机时序、音频纯逻辑、HUD、权限、热键解析、设置默认值（Phase 0–4 共 86）+ 转写/模型下载/引擎路由（Phase 5）+ 润色/隐私门/预热（Phase 6）+ 上下文分类/松手校验（Phase 7）+ 注入决策/降级/换行折叠/剪贴板竞争（Phase 8）。
 
 **只能真机验收**（`docs/TESTING.md` 矩阵，逐 Phase 已列入报告）：TCC 授权弹窗与深链落点、真实右 Option 按住/松开与 Esc、tap 被系统回收后的恢复、真实录音质量、设备热插拔续录、nonactivating 焦点保持、全屏/多 Space HUD、各反馈态视觉、端到端延迟 P95（Phase 9）。
 
