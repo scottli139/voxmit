@@ -200,7 +200,7 @@ struct PromptRefinerTests {
 
         let task = Task { await refiner.refine(raw: "原文", context: makeContext()) }
         for _ in 0..<12 { await Task { @MainActor in }.value }
-        // 首次预算到点（1.2s）→ 退避（0.3s）→ 重试预算到点（1.5s）
+        // 首次预算到点（2.0s）→ 退避（0.3s）→ 重试预算到点（2.0s）
         clock.advance(by: PromptRefiner.firstAttemptTimeout)
         for _ in 0..<12 { await Task { @MainActor in }.value }
         clock.advance(by: PromptRefiner.retryBackoff)
@@ -270,6 +270,197 @@ struct PromptRefinerTests {
 
 /// 隐私门调用计数（@Sendable 闭包内可变访问，测试内串行）
 private final class GateCallCounter: @unchecked Sendable {
+    private(set) var count = 0
+    func increment() { count += 1 }
+}
+
+/// LLM 连接预热（共享 session 语义 + 在飞防重 + 失败静默）
+struct LLMPrewarmerTests {
+
+    private final class ExecutorRecorder: @unchecked Sendable {
+        private(set) var requests: [URLRequest] = []
+        var error: (any Error)?
+        var delay: TimeInterval?
+        var clock: MockClock?
+
+        func makeExecutor() -> LLMPrewarmer.RequestExecutor {
+            { request in
+                self.requests.append(request)
+                if let delay = self.delay, let clock = self.clock {
+                    try await clock.sleep(for: delay)
+                }
+                if let error = self.error { throw error }
+                return (Data(), HTTPURLResponse(
+                    url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
+                )!)
+            }
+        }
+    }
+
+    private func makePrewarmer(
+        recorder: ExecutorRecorder,
+        apiKey: String? = "k",
+        enabled: Bool = true
+    ) -> LLMPrewarmer {
+        LLMPrewarmer(
+            baseURLProvider: { "https://api.test/v1" },
+            apiKeyProvider: { apiKey },
+            enabledProvider: { enabled },
+            execute: recorder.makeExecutor()
+        )
+    }
+
+    private func settle() async {
+        for _ in 0..<12 { await Task { @MainActor in }.value }
+    }
+
+    @Test func prewarm_sendsModelsRequestWithAuthHeader() async {
+        let recorder = ExecutorRecorder()
+        let prewarmer = makePrewarmer(recorder: recorder)
+
+        prewarmer.prewarm()
+        await settle()
+
+        #expect(recorder.requests.count == 1)
+        #expect(recorder.requests[0].url?.absoluteString == "https://api.test/v1/models")
+        #expect(recorder.requests[0].value(forHTTPHeaderField: "Authorization") == "Bearer k")
+        #expect(recorder.requests[0].timeoutInterval == LLMPrewarmer.timeout)
+    }
+
+    @Test func prewarm_disabledOrNoKey_skipsRequest() async {
+        let recorder = ExecutorRecorder()
+
+        makePrewarmer(recorder: recorder, enabled: false).prewarm()
+        makePrewarmer(recorder: recorder, apiKey: nil).prewarm()
+        makePrewarmer(recorder: recorder, apiKey: "").prewarm()
+        await settle()
+
+        #expect(recorder.requests.isEmpty)
+    }
+
+    @Test func prewarm_inFlight_noDuplicate() async throws {
+        let recorder = ExecutorRecorder()
+        let clock = MockClock()
+        recorder.delay = 60 // 挂起 60 虚拟秒，制造"在飞"窗口
+        recorder.clock = clock
+        let prewarmer = makePrewarmer(recorder: recorder)
+
+        prewarmer.prewarm()
+        await settle()
+        prewarmer.prewarm() // 在飞中：不重复发
+        await settle()
+        #expect(recorder.requests.count == 1)
+
+        clock.advance(by: 60) // 放行完成
+        await settle()
+        prewarmer.prewarm() // 完成后可再次预热（连接可能已被服务端关闭）
+        await settle()
+        #expect(recorder.requests.count == 2)
+    }
+
+    @Test func prewarm_failure_silentAndRetriable() async {
+        let recorder = ExecutorRecorder()
+        recorder.error = NSError(domain: "mock", code: -1001)
+        let prewarmer = makePrewarmer(recorder: recorder)
+
+        prewarmer.prewarm() // 失败静默（不抛错）
+        await settle()
+        #expect(recorder.requests.count == 1)
+
+        recorder.error = nil
+        prewarmer.prewarm() // 在飞标记已复位，可再试
+        await settle()
+        #expect(recorder.requests.count == 2)
+    }
+}
+
+/// Pipeline 预热触发时机（录音开始 fire-and-forget；权限拒绝不预热）
+@MainActor
+struct PipelinePrewarmTriggerTests {
+
+    private func settle() async {
+        for _ in 0..<12 { await Task { @MainActor in }.value }
+    }
+
+    @Test func hotkeyDown_recordingStarted_prewarmsOnce() async throws {
+        let counter = PrewarmCounter()
+        let clock = MockClock()
+        let pipeline = VoicePipeline(
+            clock: clock,
+            audio: MockAudioCapture(),
+            transcription: MockTranscriptionEngine(),
+            refiner: MockRefiner(),
+            injector: MockInjector(),
+            contextCollector: MockContextCollector(),
+            autoSend: { false },
+            prewarmLLM: { counter.increment() }
+        )
+        pipeline.applyPermissionSnapshot(PermissionSnapshot(
+            microphone: .authorized, listenEventGranted: true, accessibilityGranted: true
+        ))
+
+        pipeline.handleHotkeyDown(bypassModifierActive: false)
+        #expect(counter.count == 1) // 录音开始即预热（fire-and-forget）
+
+        clock.advance(by: VoicePipeline.confirmationDelay)
+        await settle()
+        #expect(pipeline.isRecording)
+        #expect(counter.count == 1) // 确认期通过不重复触发
+
+        pipeline.handleHotkeyUp()
+        await settle()
+        #expect(counter.count == 1) // 松手不再触发
+    }
+
+    @Test func hotkeyDown_micDenied_noPrewarm() {
+        let counter = PrewarmCounter()
+        let pipeline = VoicePipeline(
+            clock: MockClock(),
+            audio: MockAudioCapture(),
+            transcription: MockTranscriptionEngine(),
+            refiner: MockRefiner(),
+            injector: MockInjector(),
+            contextCollector: MockContextCollector(),
+            autoSend: { false },
+            prewarmLLM: { counter.increment() }
+        )
+        pipeline.applyPermissionSnapshot(PermissionSnapshot(
+            microphone: .denied, listenEventGranted: true, accessibilityGranted: true
+        ))
+
+        pipeline.handleHotkeyDown(bypassModifierActive: false)
+
+        #expect(counter.count == 0) // 麦克风拒绝早退，不预热
+    }
+
+    @Test func menuToggle_alsoPrewarms() async throws {
+        let counter = PrewarmCounter()
+        let clock = MockClock()
+        let pipeline = VoicePipeline(
+            clock: clock,
+            audio: MockAudioCapture(),
+            transcription: MockTranscriptionEngine(),
+            refiner: MockRefiner(),
+            injector: MockInjector(),
+            contextCollector: MockContextCollector(),
+            autoSend: { false },
+            prewarmLLM: { counter.increment() }
+        )
+        pipeline.applyPermissionSnapshot(PermissionSnapshot(
+            microphone: .authorized, listenEventGranted: true, accessibilityGranted: true
+        ))
+
+        pipeline.handleMenuToggle() // 菜单降级路径同样预热
+        #expect(counter.count == 1)
+
+        clock.advance(by: VoicePipeline.confirmationDelay)
+        await settle()
+        #expect(pipeline.isRecording)
+    }
+}
+
+/// 预热计数（@Sendable 闭包内可变访问）
+private final class PrewarmCounter: @unchecked Sendable {
     private(set) var count = 0
     func increment() { count += 1 }
 }

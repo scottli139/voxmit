@@ -73,6 +73,9 @@ final class VoicePipeline: ObservableObject {
     /// 最近一次注入的结果摘要（HUD 反馈态显示用，Phase 4）；下次 keyDown 时清空
     @Published private(set) var lastInjectionReport: InjectionReport?
 
+    /// LLM 连接预热钩子（fire-and-forget；VoxmitAppDelegate 注入，默认 nil 不预热）
+    private let prewarmLLM: (@Sendable () -> Void)?
+
     init(
         clock: any PipelineClock = SystemPipelineClock(),
         audio: any AudioCapturing = NoOpAudioCapture(),
@@ -80,7 +83,8 @@ final class VoicePipeline: ObservableObject {
         refiner: any PromptRefining = NoOpPromptRefiner(),
         injector: any TextInjecting = PlaceholderClipboardInjector(),
         contextCollector: any ContextCollecting = PlaceholderContextCollector(),
-        autoSend: @escaping () -> Bool = { UserDefaults.standard.bool(forKey: SettingsKeys.injectAutoSend) }
+        autoSend: @escaping () -> Bool = { UserDefaults.standard.bool(forKey: SettingsKeys.injectAutoSend) },
+        prewarmLLM: (@Sendable () -> Void)? = nil
     ) {
         self.clock = clock
         self.audio = audio
@@ -89,6 +93,7 @@ final class VoicePipeline: ObservableObject {
         self.injector = injector
         self.contextCollector = contextCollector
         self.autoSendProvider = autoSend
+        self.prewarmLLM = prewarmLLM
     }
 
     // MARK: - 事件入口（§4.2.0 接口）
@@ -110,6 +115,8 @@ final class VoicePipeline: ObservableObject {
             finish(with: .failed("无法开始录音：\(error.localizedDescription)"))
             return
         }
+        // LLM 连接预热（fire-and-forget，不阻塞主链路；内部自带开关/Key/在飞检查）
+        prewarmLLM?()
         let start = clock.now
         pendingStart = start
         pendingTask = Task { [weak self] in
@@ -147,8 +154,14 @@ final class VoicePipeline: ObservableObject {
             finish(with: .cancelled)
             return
         }
-        // §3.4.3：录音期间切换前台 App 的场景以松手时前台重新校验目标——Phase 7 实装，当前沿用 keyDown 快照
-        startProcessing(target: targetSnapshot ?? contextCollector.snapshotTarget())
+        // §3.4.3：松手时前台校验——录音期间用户可能切换了前台 App，以松手时前台为准
+        let releaseSnapshot = contextCollector.snapshotTarget()
+        if let previous = targetSnapshot,
+           releaseSnapshot.bundleID != previous.bundleID || releaseSnapshot.pid != previous.pid {
+            AppLog.notice(.context, "松手时前台已切换：\(previous.appName) → \(releaseSnapshot.appName.isEmpty ? "（无上下文）" : releaseSnapshot.appName)")
+        }
+        targetSnapshot = releaseSnapshot
+        startProcessing(target: releaseSnapshot)
     }
 
     /// Esc 取消（FR-B5）与误触取消统一入口（§4.2.0）；确认期/录音中/处理中均可取消
@@ -221,8 +234,13 @@ final class VoicePipeline: ObservableObject {
                 AppLog.info(.refiner, "旁路修饰键生效（FR-D4），本次跳过润色")
             } else {
                 state = .refining
-                // AppCategory 分类表在 Phase 7 实装，当前固定 .other
-                let context = VoiceContext(target: target, appCategory: .other, selectedText: nil, cliSession: nil)
+                // AppCategory 分类表（Phase 7 实装：bundleID → 终端/编辑器/浏览器/其他）
+                let context = VoiceContext(
+                    target: target,
+                    appCategory: AppCategoryMapper.category(for: target.bundleID),
+                    selectedText: nil, // P1，AX 选区（FR-E2 后续）
+                    cliSession: nil    // P2，AI CLI 识别（FR-E3 后续）
+                )
                 let result = await refiner.refine(raw: raw, context: context)
                 finalText = result.text
                 wasRefined = result.refined

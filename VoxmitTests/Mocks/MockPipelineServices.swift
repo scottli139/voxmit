@@ -155,10 +155,16 @@ final class MockContextCollector: ContextCollecting, @unchecked Sendable {
         capturedAt: Date(timeIntervalSince1970: 1_700_000_000)
     )
 
+    /// 按调用顺序返回的队列（前台切换测试：keyDown 取 A、松手取 B）；为空时回落 target
+    var snapshotsToReturn: [TargetSnapshot] = []
+
     private(set) var callCount = 0
 
     func snapshotTarget() -> TargetSnapshot {
         callCount += 1
+        if !snapshotsToReturn.isEmpty {
+            return snapshotsToReturn.removeFirst()
+        }
         return target
     }
 }

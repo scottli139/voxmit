@@ -141,15 +141,19 @@
 - 2026-08-19：真机联调排障④temperature 400——Kimi Code 端点仅允许 temperature=1，请求体改为不携带 temperature（各服务商走默认值）。
 - 2026-08-19：端点选型实测——Kimi Code 端点（kimi-for-coding 系列）结构性不适合润色后端：强制思考且计入 max_tokens（500 额度正文被吃光吐空串）、延迟 3~6.6s 超 3s 预算；Moonshot 开放平台 moonshot-v1-8k 实测 0.6~2s、无强制思考、工程口述质量达标。**真机验收通过**：转写 918ms → 首试 1.2s 超时（冷连接）→ 重试成功（润色 2364ms，11 字 → 31 字），`已润色=true`。
 
-### Phase 7: 上下文快照 📋 (FR-E1, FR-F5)
+### Phase 7: 上下文快照 ✅ (FR-E1, FR-F5)
 
 依赖：Phase 2（keyDown 时机）
 
-- [ ] TargetSnapshot：keyDown 瞬间 `frontmostApplication`（PID / bundleID / 名称）+ AX 焦点窗口标题（需求文档 §3.4.3）
-- [ ] bundleID → AppCategory 适配表（终端 / 编辑器 / 浏览器 / 其他）
-- [ ] 松手时前台校验（录音中 Cmd+Tab 切换场景，以松手时前台为准）
-- [ ] 无 AX 权限降级为"仅 App 名"
-- [ ] 单测：分类表与降级矩阵
+- [x] TargetSnapshot：keyDown 瞬间 `frontmostApplication`（PID / bundleID / 名称）+ AX 焦点窗口标题（需求文档 §3.4.3）
+- [x] bundleID → AppCategory 适配表（终端 / 编辑器 / 浏览器 / 其他）
+- [x] 松手时前台校验（录音中 Cmd+Tab 切换场景，以松手时前台为准）
+- [x] 无 AX 权限降级为"仅 App 名"
+- [x] 单测：分类表与降级矩阵
+
+- 2026-08-19：Phase 7 落地。新增 `Modules/Context/RealContextCollector.swift`（SystemWorkspace 协议隔离 NSWorkspace+AX——NSWorkspace 在 macOS 26 SDK 为 @MainActor 标注，assumeIsolated 限 Pipeline/测试主线程调用；降级矩阵：无 AX/无焦点窗口 → 仅 App 名，前台取不到 → 「无上下文」pid 0）+ `AppCategoryMapper`（纯表：Terminal/iTerm2/Warp/Ghostty/kitty/SecureCRT/Alacritty、VSCode/Cursor/Zed/Xcode/Sublime/JetBrains 前缀、Safari/Chrome/Firefox/Brave/Edge/Arc，未知 → other）。
+- 2026-08-19：松手校验（§3.4.3）——handleHotkeyUp 必二次快照，bundleID/pid 变化打 NOTICE 并以松手前台为准（注入目标与润色上下文同步）；VoiceContext.appCategory 由 AppCategoryMapper 真实分类（替换 .other 硬编码）；「无上下文」时 RefinePrompt 省略上下文块（润色仅句式整理）。pbxproj 未动（文件系统同步分组自动纳入 Modules/Context）。
+- 2026-08-19：三项改动——① LLM 连接预热：冷连接 TLS 握手吃润色预算（真机首试 1219ms 超 1.2s、重试 1562ms 超 1.5s 连退），新增 `Modules/Refiner/LLMPrewarmer.swift`（`GET {baseURL}/models` 2s 超时、Bearer 鉴权不打响应体、失败静默 DEBUG、在飞防重），关键为 delegate 的 `llmSession` 同时注入 Refiner 与预热器（共享 keep-alive 连接池否则预热无效）；触发点为 `handleHotkeyDown` 起录成功（`prewarmLLM` 可空钩子，菜单路径同覆盖）。② 润色预算放宽（需求 v0.9）：3s（1.2+0.3+1.5）→ 4.3s（2.0+0.3+2.0），原因"响应波动+冷连接致 3s 下回退率过高，润色成功但略慢优于快但未润色"；常量集中在 `PromptRefiner` 三个 timeout。③ 上下文日志补强：无标题两条路径分开（「无辅助功能权限，仅记录 App 名」vs「已授权 AX 但取不到焦点窗口标题」，collector 注入 axTrustedProvider），快照日志补 AppCategory 分类。单测 +9（226 总），build/test 全绿。
 
 ### Phase 8: 结果注入 📋 (FR-F1, FR-F4, FR-F5)
 

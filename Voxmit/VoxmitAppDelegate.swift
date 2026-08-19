@@ -14,7 +14,19 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
     private(set) lazy var pipeline = VoicePipeline(
         audio: audioCapture,
         transcription: transcriptionRouter,
-        refiner: promptRefiner
+        refiner: promptRefiner,
+        contextCollector: RealContextCollector(
+            axTrustedProvider: { [weak self] in
+                // snapshot 为 @MainActor 属性；collector 仅在主线程被调用（Pipeline/测试），assumeIsolated 安全
+                MainActor.assumeIsolated {
+                    self?.permissionManager.snapshot.accessibilityGranted ?? false
+                }
+            }
+        ),
+        prewarmLLM: { [weak self] in
+            // fire-and-forget：回主线程触发（llmPrewarmer 为 @MainActor lazy 属性）
+            Task { @MainActor in self?.llmPrewarmer.prewarm() }
+        }
     )
 
     /// 权限自检引导窗口；完成（含「跳过，降级运行」）时写入 UserDefaults 标记
@@ -70,14 +82,18 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
     /// 引擎路由器：Pipeline 持有的稳定引用，运行时热切换
     private(set) lazy var transcriptionRouter = TranscriptionEngineRouter(current: speechEngine)
 
-    /// Prompt 润色（Phase 6，FR-D1）：OpenAI 兼容端点 + 隐私门 + 3s 预算回退
+    /// LLM 专用 URLSession（独立 keep-alive 连接池；Refiner 与预热器共享同一实例，预热才有效）
+    private let llmSession = URLSession(configuration: .default)
+
+    /// Prompt 润色（Phase 6，FR-D1）：OpenAI 兼容端点 + 隐私门 + 4.3s 预算回退
     private(set) lazy var promptRefiner = PromptRefiner(
         client: OpenAIChatClient(
             baseURLProvider: {
                 UserDefaults.standard.string(forKey: SettingsKeys.llmBaseURL)
                     ?? "https://api.moonshot.cn/v1"
             },
-            apiKeyProvider: { KeychainHelper.readAPIKey() }
+            apiKeyProvider: { KeychainHelper.readAPIKey() },
+            session: llmSession
         ),
         settingsProvider: {
             let defaults = UserDefaults.standard
@@ -91,6 +107,19 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
         privacyGate: { [weak self] in
             await self?.confirmRefinePrivacy() ?? false
         }
+    )
+
+    /// LLM 连接预热（与 Refiner 共享 llmSession；录音开始时 fire-and-forget）
+    private(set) lazy var llmPrewarmer = LLMPrewarmer(
+        baseURLProvider: {
+            UserDefaults.standard.string(forKey: SettingsKeys.llmBaseURL)
+                ?? "https://api.moonshot.cn/v1"
+        },
+        apiKeyProvider: { KeychainHelper.readAPIKey() },
+        enabledProvider: {
+            UserDefaults.standard.bool(forKey: SettingsKeys.llmRefineEnabled)
+        },
+        execute: LLMPrewarmer.makeExecutor(session: llmSession)
     )
 
     /// 诊断日志导出（设置页「诊断」区）

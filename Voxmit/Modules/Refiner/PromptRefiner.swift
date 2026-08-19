@@ -13,10 +13,11 @@ final class PromptRefiner: PromptRefining, @unchecked Sendable {
         var enabled: Bool
     }
 
-    /// 时序预算（§4.2.4 总预算 3s 的分配）：首次尝试 1.2s + 退避 0.3s + 重试 1.5s = 3.0s
-    static let firstAttemptTimeout: TimeInterval = 1.2
+    /// 时序预算（2026-08-19 放宽，需求文档 §4.2.4）：首次尝试 2.0s + 退避 0.3s + 重试 2.0s = 4.3s
+    /// （原因：Moonshot 响应波动 + 冷连接 TLS 握手，3s 预算下超时回退率过高；"润色成功但略慢"优于"快但未润色"）
+    static let firstAttemptTimeout: TimeInterval = 2.0
     static let retryBackoff: TimeInterval = 0.3
-    static let retryAttemptTimeout: TimeInterval = 1.5
+    static let retryAttemptTimeout: TimeInterval = 2.0
 
     /// 请求体约束（§4.2.4：输出 < 500 tokens）
     static let maxTokens = 500
@@ -69,7 +70,7 @@ final class PromptRefiner: PromptRefining, @unchecked Sendable {
         )
         let startedAt = Date()
 
-        // 首次尝试（≤1.2s）
+        // 首次尝试（≤2.0s）
         if let text = await attempt(request, timeout: Self.firstAttemptTimeout, attemptNumber: 1) {
             return finish(text: text, startedAt: startedAt, model: settings.model, inputCount: raw.count)
         }
@@ -81,7 +82,7 @@ final class PromptRefiner: PromptRefining, @unchecked Sendable {
             return (raw, false)
         }
 
-        // 重试一次（≤1.5s）
+        // 重试一次（≤2.0s）
         if let text = await attempt(request, timeout: Self.retryAttemptTimeout, attemptNumber: 2) {
             return finish(text: text, startedAt: startedAt, model: settings.model, inputCount: raw.count)
         }

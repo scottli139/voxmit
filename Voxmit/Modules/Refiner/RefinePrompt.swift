@@ -23,15 +23,18 @@ enum RefinePrompt {
         ]
     }
 
-    /// user message：上下文补充块（§4.2.4：前台 App 名、窗口标题、选区 ≤2KB）+ 口述原文
+    /// user message：上下文补充块（§4.2.4：前台 App 名、窗口标题、选区 ≤2KB）+ 口述原文；
+    /// App 名为空 = 「无上下文」模式（§4.2.5 降级矩阵：全部失败 → 润色仅做句式整理）
     static func userMessage(raw: String, context: VoiceContext) -> String {
         var contextLines: [String] = []
-        contextLines.append("当前 App：\(context.target.appName)（\(context.target.bundleID)）")
-        if let title = context.target.windowTitle, !title.isEmpty {
-            contextLines.append("窗口标题：\(title)")
-        }
-        if let selected = context.selectedText, !selected.isEmpty {
-            contextLines.append("选中内容：\n\(truncateUTF8(selected, maxBytes: selectedTextLimit))")
+        if !context.target.appName.isEmpty {
+            contextLines.append("当前 App：\(context.target.appName)（\(context.target.bundleID)）")
+            if let title = context.target.windowTitle, !title.isEmpty {
+                contextLines.append("窗口标题：\(title)")
+            }
+            if let selected = context.selectedText, !selected.isEmpty {
+                contextLines.append("选中内容：\n\(truncateUTF8(selected, maxBytes: selectedTextLimit))")
+            }
         }
 
         var parts: [String] = []

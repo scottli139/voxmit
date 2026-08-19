@@ -185,7 +185,7 @@ struct VoicePipelineStateMachineTests {
         #expect(f.refiner.receivedContext?.target.bundleID == "com.apple.Terminal") // keyDown 快照目标
         #expect(f.injector.receivedText == "润色后的工程 Prompt")
         #expect(f.injector.receivedAutoSend == true)
-        #expect(f.context.callCount == 1) // §3.4.3：keyDown 瞬间快照一次
+        #expect(f.context.callCount == 2) // §3.4.3：keyDown 快照一次 + 松手时前台校验一次
     }
 
     @Test func hotkeyUp_justUnder300ms_cancels() async {
