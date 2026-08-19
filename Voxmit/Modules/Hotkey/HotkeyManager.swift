@@ -335,6 +335,14 @@ private func hotkeyEventTapCallback(
     // CGEvent 非 Sendable，keyCode/flags 在回调现场提取后再进入 MainActor 隔离域
     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
     let flags = event.flags
+    // 提前过滤：tap 只关心 flagsChanged（热键）与 keyDown（Esc，FR-B5）。
+    // Phase 8 注入用 CGEventPost 模拟 Cmd+V / Return，其 keyDown 会经 RunLoop source
+    // 投递回本回调——此重入路径下 MainActor.assumeIsolated 的当前执行器跟踪失效，
+    // 真机 SIGSEGV（EXC_BAD_ACCESS，栈见 hotkeyEventTapCallback → assumeIsolated）。
+    // 非 Esc 的 keyDown 一律直接放行，不进入 MainActor 隔离域。
+    if type == .keyDown && keyCode != HotkeyEventParser.escapeKeyCode {
+        return passthrough
+    }
     let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
     MainActor.assumeIsolated {
         manager.handleTapEvent(type: type, keyCode: keyCode, flags: flags)
