@@ -13,7 +13,8 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
     /// lazy：依赖 audioCapture 与转写路由器，且避免 @MainActor 类显式 override init 的隔离问题
     private(set) lazy var pipeline = VoicePipeline(
         audio: audioCapture,
-        transcription: transcriptionRouter
+        transcription: transcriptionRouter,
+        refiner: promptRefiner
     )
 
     /// 权限自检引导窗口；完成（含「跳过，降级运行」）时写入 UserDefaults 标记
@@ -69,6 +70,29 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
     /// 引擎路由器：Pipeline 持有的稳定引用，运行时热切换
     private(set) lazy var transcriptionRouter = TranscriptionEngineRouter(current: speechEngine)
 
+    /// Prompt 润色（Phase 6，FR-D1）：OpenAI 兼容端点 + 隐私门 + 3s 预算回退
+    private(set) lazy var promptRefiner = PromptRefiner(
+        client: OpenAIChatClient(
+            baseURLProvider: {
+                UserDefaults.standard.string(forKey: SettingsKeys.llmBaseURL)
+                    ?? "https://api.moonshot.cn/v1"
+            },
+            apiKeyProvider: { KeychainHelper.readAPIKey() }
+        ),
+        settingsProvider: {
+            let defaults = UserDefaults.standard
+            return PromptRefiner.Settings(
+                baseURL: defaults.string(forKey: SettingsKeys.llmBaseURL) ?? "https://api.moonshot.cn/v1",
+                model: defaults.string(forKey: SettingsKeys.llmModel) ?? "moonshot-v1-8k",
+                enabled: defaults.bool(forKey: SettingsKeys.llmRefineEnabled)
+            )
+        },
+        apiKeyProvider: { KeychainHelper.readAPIKey() },
+        privacyGate: { [weak self] in
+            await self?.confirmRefinePrivacy() ?? false
+        }
+    )
+
     /// 诊断日志导出（设置页「诊断」区）
     private(set) lazy var diagnosticExporter = DiagnosticLogExporter(permissionManager: permissionManager)
 
@@ -82,6 +106,12 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
 
         AppLog.info(.app, "Voxmit 启动完成（版本 \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知")）")
+
+        // 生效中的 LLM 设置快照（排障定位「配置是什么」；Key 本体永不落日志）
+        let defaults = UserDefaults.standard
+        let llmBaseURL = defaults.string(forKey: SettingsKeys.llmBaseURL) ?? "https://api.moonshot.cn/v1"
+        let llmModel = defaults.string(forKey: SettingsKeys.llmModel) ?? "moonshot-v1-8k"
+        AppLog.info(.settings, "LLM 设置：端点 \(llmBaseURL)，模型 \(llmModel)，润色开关 \(defaults.bool(forKey: SettingsKeys.llmRefineEnabled))，已保存 Key \(KeychainHelper.readAPIKey() != nil)")
 
         // 权限快照实时同步给 Pipeline（降级决策数据源，需求文档 §4.4）
         permissionSync = permissionManager.$snapshot.sink { [pipeline] snapshot in
@@ -166,5 +196,29 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
                 }
             }
         }
+    }
+
+    /// 润色隐私门（§4.2.4）：首次实际发送前必挡一次。
+    /// 已确认过直接放行；否则 NSAlert 说明，「继续」记 acknowledged 放行，「本次跳过」返回 false（下次再问）。
+    private func confirmRefinePrivacy() async -> Bool {
+        if UserDefaults.standard.bool(forKey: SettingsKeys.llmPrivacyAcknowledged) {
+            return true
+        }
+        let baseURL = UserDefaults.standard.string(forKey: SettingsKeys.llmBaseURL)
+            ?? "https://api.moonshot.cn/v1"
+        NSApp.activate() // LSUIElement：先激活再弹窗（否则窗口可能藏在其他 App 后）
+        let accepted = await MainActor.run {
+            let alert = NSAlert()
+            alert.messageText = "启用润色将发送转写文本至 LLM 服务商"
+            alert.informativeText = "转写文本将发送至您配置的端点（\(baseURL)）。可随时在设置中关闭润色。"
+            alert.addButton(withTitle: "继续")
+            alert.addButton(withTitle: "本次跳过")
+            return alert.runModal() == .alertFirstButtonReturn
+        }
+        if accepted {
+            UserDefaults.standard.set(true, forKey: SettingsKeys.llmPrivacyAcknowledged)
+            AppLog.notice(.settings, "润色隐私告知已确认")
+        }
+        return accepted
     }
 }

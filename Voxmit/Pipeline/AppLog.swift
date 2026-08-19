@@ -14,7 +14,7 @@ enum AppLogLevel: String, Sendable, CaseIterable {
 
 /// 日志 category（按模块分）
 enum AppLogCategory: String, Sendable, CaseIterable {
-    case app, hotkey, audio, pipeline, transcription, download, injection, hud, settings, permissions
+    case app, hotkey, audio, pipeline, transcription, download, injection, hud, settings, permissions, refiner
 }
 
 /// 内存环形日志缓冲：当前会话的保底诊断数据（系统日志库不可用时导出仍有内容）。

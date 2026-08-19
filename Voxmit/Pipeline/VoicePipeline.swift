@@ -218,6 +218,7 @@ final class VoicePipeline: ObservableObject {
             var wasRefined = false
             if skipRefinement {
                 finalText = raw // FR-D4 旁路：跳过润色，直接注入原始转写
+                AppLog.info(.refiner, "旁路修饰键生效（FR-D4），本次跳过润色")
             } else {
                 state = .refining
                 // AppCategory 分类表在 Phase 7 实装，当前固定 .other

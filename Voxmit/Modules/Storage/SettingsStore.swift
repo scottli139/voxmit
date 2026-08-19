@@ -20,6 +20,8 @@ enum SettingsKeys {
     static let llmBaseURL = "llm.baseURL"
     static let llmModel = "llm.model"
     static let llmRefineEnabled = "llm.refineEnabled"
+    /// 润色隐私告知已确认（§4.2.4 首次启用弹窗；确认后不再弹）
+    static let llmPrivacyAcknowledged = "llm.privacyAcknowledged"
     static let injectAutoSend = "inject.autoSend"
     static let injectCollapseNewlines = "inject.collapseNewlines"
     static let historyLimit = "history.limit"
@@ -45,6 +47,7 @@ enum SettingsKeys {
             llmBaseURL: "https://api.moonshot.cn/v1",
             llmModel: "moonshot-v1-8k",      // Moonshot 模型 ID，按服务商文档可改
             llmRefineEnabled: true,
+            llmPrivacyAcknowledged: false,
             injectAutoSend: false,           // FR-F4，默认关
             injectCollapseNewlines: true,    // CLI 目标默认折叠换行，适配层可按 App 覆盖
             historyLimit: 500,
