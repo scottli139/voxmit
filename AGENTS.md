@@ -4,22 +4,22 @@
 
 ## 1. 项目现状（重要）
 
-**Phase 0 工程脚手架、Phase 1 权限自检与引导（FR-G5）已完成（2026-08-17）：Xcode 工程可构建、可测试；热键/音频/转写/润色/注入等功能模块尚未实现，从 Phase 2 起按 `PLAN.md` 推进。**
+**Phase 0–8 已完成（2026-08-19）：工程脚手架、权限自检、热键、音频采集、录音 HUD、本地转写、LLM 润色、上下文快照、结果注入均已实现并验证；当前处于 Phase 9 联调与 MVP 验收。**
 
-- 需求文档 `语音编程工具-需求分析与方案说明.md`（v0.8，2026-08-18；§8 开放问题已全部决策，定名 Voxmit）是需求与方案的唯一事实来源。
+- 需求文档 `语音编程工具-需求分析与方案说明.md`（v0.14，2026-08-19；§8 开放问题已全部决策，定名 Voxmit）是需求与方案的唯一事实来源。
 - 仓库：https://github.com/scottli139/voxmit（Private，2026-08-17 创建）。
 - 构建与测试命令（CI 尚未建立，本地执行）：
   - `xcodebuild build -scheme Voxmit -destination 'platform=macOS'`
   - `xcodebuild test -scheme Voxmit -destination 'platform=macOS'`
-- 工程要点：手写 pbxproj（objectVersion 70，`Voxmit/` 与 `VoxmitTests/` 为文件系统同步分组，新增源码文件免改 pbxproj）；签名走 xcconfig 分层——`Configurations/Signing.xcconfig`（入库，默认 ad-hoc）+ `Configurations/LocalSigning.xcconfig`（gitignored，本机 Developer ID 覆盖；证书名称/Team ID 属本地私有信息，禁止提交，2026-08-19 起本机已启用稳定签名，TCC/Keychain 授权跨构建持久）；Debug 构建本机关闭 hardened runtime（macOS 26：Developer ID + runtime + 未公证 → 麦克风授权静默拒绝，见 implementation-notes）；Swift 6 严格并发。踩坑记录见 `PLAN.md` Phase 0 的 Session 记录。
-- §4 的模块划分目前仅落地了工程骨架与接口契约（需求文档 §9.1）；实现模块时以需求文档 §4.2/§3.4 为准，不要臆造尚未实现的行为。
+- 工程要点：手写 pbxproj（objectVersion 70，`Voxmit/` 与 `VoxmitTests/` 为文件系统同步分组，新增源码文件免改 pbxproj）；签名走 xcconfig 分层——`Configurations/Signing.xcconfig`（入库，默认 ad-hoc）+ `Configurations/LocalSigning.xcconfig`（gitignored，本机 Developer ID 覆盖；证书名称/Team ID 属本地私有信息，禁止提交，2026-08-19 起本机已启用稳定签名，TCC/Keychain 授权跨构建持久）；Debug 构建本机关闭 hardened runtime（macOS 26：Developer ID + runtime + 未公证 → 麦克风授权静默拒绝，见 implementation-notes）；Swift 6 严格并发。踩坑与架构要点见 `docs/implementation-notes.md`。
+- §4 模块划分的 P0 部分（Phase 1–8）已全部落地；P1/P2（AX 选区、CLI stdin 直通、MCP Server 等）未做。实现时以需求文档 §4.2/§3.4 与 §3.1 优先级为准，不要臆造尚未实现的行为。
 
 ### 文档地图
 
 | 文件 | 内容 |
 |---|---|
 | `语音编程工具-需求分析与方案说明.md` | 需求与方案唯一事实来源（FR 编号、优先级、里程碑、接口契约 §9.1） |
-| `docs/ARCHITECTURE.md` | 架构设计文档：设计意图 + Phase 0–4 as-built 实况（分层、状态机、模块边界、并发模型） |
+| `docs/ARCHITECTURE.md` | 架构设计文档：设计意图 + as-built 实况（分层、状态机、模块边界、并发模型） |
 | `PLAN.md` | 开发计划与任务进度（唯一的任务看板，不在本文件重复维护） |
 | `CONTRIBUTING.md` | 贡献指南：环境搭建、提交前检查链、代码质量要求、Commit/PR 规范 |
 | `docs/TESTING.md` | 测试要求：质量门禁、单测规范、真机手动测试矩阵、性能验收方法、CI 规划 |
@@ -52,7 +52,7 @@
 | 自动更新 | Sparkle（EdDSA 签名校验） |
 | 参考实现 | VoiceInk（开源 Swift 同类工具，架构可直接借鉴） |
 
-## 4. 架构与模块划分（计划，对应文档 §4.2）
+## 4. 架构与模块划分（as-built，对应文档 §4.2）
 
 创建工程时请按以下模块组织代码，名称沿用文档命名：
 
@@ -61,10 +61,10 @@
 - **HotkeyManager**（Phase 2 已落地，`Modules/Hotkey/`）—— 全局热键；默认右 Option 按住说话（Push-to-Talk），CGEventTap **listen-only**（只需"输入监控"权限）；Esc 取消录音；`HotkeyEventParser` 纯解析器承载判定逻辑（可单测），tap 失效自动恢复 + 看门狗巡检重建；热键冲突检测与自定义（FR-B2）属 P1 未做。
 - **AudioCapture**（Phase 3 已落地，`Modules/Audio/`）—— 音频采集；AVAudioEngine + AVAudioConverter 重采样 16kHz mono Float32，仅存内存不落盘；50ms 电平发布（Combine）、5 分钟上限看门狗（`MaxDurationWatchdog`，回调接 `VoicePipeline.handleMaxRecordingDuration`）、设备热切换重建续录；纯逻辑（电平/静音裁剪/重采样/设备决策）拆在 `AudioProcessing.swift` 可单测。
 - **RecordingHUD**（Phase 4 已落地，`UI/RecordingHUD.swift`）—— 非激活 NSPanel 录音浮层（不抢焦点、全屏/多 Space 可见）；波形 + 阶段状态 + 反馈态（成功/未润色角标/手动粘贴/失败）；停留时长由 `HUDVisibility` 纯函数决策、计时在 HUD 侧（状态机终止态保持即刻回 idle）；反馈数据源自 Pipeline 的 `lastInjectionReport`。
-- **TranscriptionEngine** —— 转写引擎抽象为协议，WhisperKit（默认 small 模型）/ Speech / 云端可运行时切换；支持自定义热词词表。
-- **PromptRefiner**（Phase 6 已落地，`Modules/Refiner/`）—— LLM 润色（去口水词、句式规范化、指代消解）；OpenAI 兼容端点（Keychain 存 Key），3s 预算（1.2+0.3+1.5）超时/失败回退注入原文；首次实际发送前隐私告知门（`llm.privacyAcknowledged`）；旁路开关（右 Option+Shift 跳过润色）。
-- **ContextCollector** —— 前台 App 识别、选中文本/光标读取；热键按下时快照注入目标（FR-F5，见文档 §3.4.3）；无权限时静默降级为"无上下文"模式。
-- **Injector** —— 三档注入：剪贴板+模拟粘贴（通用兜底，模拟按键需"辅助功能"权限）/ AX 写入（`AXSelectedText` 光标处插入，禁止覆盖已有输入）/ CLI stdin 直通；注入前预览浮层（P1）；注入后恢复原剪贴板内容。
+- **TranscriptionEngine**（Phase 5 已落地，`Modules/Transcription/`）—— 转写引擎抽象为协议，WhisperKit（默认 small 模型，自实现前台下载器 + hf-mirror 回退 + 短音频锁中文 `asr.whisperLanguage`）/ Speech（兜底，locale 可配）可运行时切换；云端与自定义热词词表属 P1 未做。
+- **PromptRefiner**（Phase 6 已落地，`Modules/Refiner/`）—— LLM 润色（去口水词、句式规范化、指代消解，模板含防脑补硬约束）；OpenAI 兼容端点（Keychain 存 Key），7.3s 预算（3.5+0.3+3.5，冷连接预热共享连接池）超时/失败回退注入原文；首次实际发送前隐私告知门（`llm.privacyAcknowledged`）；旁路开关（右 Option+Shift 跳过润色）。
+- **ContextCollector**（Phase 7 已落地，`Modules/Context/`）—— 前台 App 识别（NSWorkspace+AX）+ bundleID→AppCategory 分类表；热键按下快照注入目标、松手二次快照校验（FR-F5，见文档 §3.4.3）；无 AX 权限/无焦点窗口静默降级为"无上下文/仅 App 名"模式；选区读取（FR-E2）属 P1 未做。
+- **Injector**（Phase 8 已落地 P0 档，`Modules/Injector/`）—— 剪贴板快照→写入→模拟 Cmd+V→约 300ms 后 changeCount 竞争保护恢复原剪贴板（`ClipboardInjector`，注入链 `@MainActor`）；无辅助功能权限/无有效目标降级仅剪贴板；autoSend 粘贴后模拟 Return；AX 写入（`AXSelectedText` 光标处插入，禁止覆盖已有输入）与 CLI stdin 直通、注入前预览浮层属 P1 未做。
 - **MCP Server（V2）** —— 暴露 `listen_voice` 工具，供 AI Agent 主动调用获取语音输入。
 
 主链路时序见文档 §4.3；功能优先级（P0/P1/P2）见文档 §3.1。
@@ -90,7 +90,7 @@
 
 ## 7. 测试策略
 
-已建立：需求层面见需求文档 §9.3，工程化要求（质量门禁、单测规范、真机手动测试矩阵、性能验收方法、CI 规划）见 `docs/TESTING.md`。要点：核心逻辑（状态机、润色回退、注入降级、上下文打包、剪贴板恢复）以协议 mock 编写单元测试，不依赖系统权限；系统交互需真机手动验证。验收标准见需求文档 §5（MVP：终端中的 Kimi Code 内按住说话 → 松手 2 秒内润色后 Prompt 出现在输入框光标处）。
+已建立：需求层面见需求文档 §9.3，工程化要求（质量门禁、单测规范、真机手动测试矩阵、性能验收方法、CI 规划）见 `docs/TESTING.md`。要点：核心逻辑（状态机、润色回退、注入降级、上下文打包、剪贴板恢复）以协议 mock 编写单元测试，不依赖系统权限；系统交互需真机手动验证。验收标准见需求文档 §5（MVP：终端中的 Kimi Code 内按住说话 → 松手 2 秒内润色后 Prompt 出现在输入框光标处）。验证请用全量 `xcodebuild test`；`-only-testing` 定向运行部分 async+MockClock 套件（如 `PromptRefinerTests`）会挂起，属既有问题（详见 implementation-notes）。
 
 ## 8. 里程碑（计划，详见文档 §5）
 
