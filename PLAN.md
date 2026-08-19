@@ -196,18 +196,19 @@
 
 ## 下一步行动
 
-**第一波（MVP，约 2 周，顺序含依赖约束）：**
+**当前：Phase 9 联调与 MVP 验收（进行中）**
 
-1. **Phase 0 工程脚手架**（一切的前提；模型下载流程尽早跑通，~500MB 不阻塞本地转写联调）
-2. **Phase 1 权限自检**（后续模块的降级逻辑依赖它）
-3. **Phase 2 热键 + Phase 3 音频**（相互独立，可并行）
-4. **Phase 4 HUD**（依赖 2、3 的接口先行约定）
-5. **Phase 7 快照 → Phase 6 润色 → Phase 8 注入**（顺序依赖，接口按需求文档 §9.1）
-6. **Phase 5 转写联调** → **Phase 9 联调验收**
+- [ ] 端到端链路联调（需求文档 §4.3 时序全路径）
+- [ ] 性能实测：20 次 15s 语音取 P95 ≤ 2s（对照 §1.3 预算表）
+- [ ] 目标 App 注入矩阵手动测试（`docs/TESTING.md` 清单）
+- [ ] 三权限拒绝 / 运行中撤销的降级路径走查
+- [ ] 需求文档 §5 MVP 验收清单全部通过
 
-**工程化（随 Phase 0 同步落地）：** SwiftLint / SwiftFormat 配置、GitHub Actions CI（编译 + 单测）、`.gitignore`（Xcode / 模型文件 / 签名材料）。
+**Phase 0–8 已完成（2026-08-19）：** 工程脚手架、权限自检、热键、音频采集、录音 HUD、本地转写、LLM 润色、上下文快照、结果注入均已实现并验证（240 单测全绿）。开源材料（LICENSE / 双语 README·CONTRIBUTING / 官网 / issue·PR 模板）同日落地，repo 已转 Public。
 
-**暂缓项（等排期）：** GRDB 历史记录与 Sparkle（V1.1）、历史记录加密（§8-3 已决策：列为 P2）。LICENSE / README / 官网 / 贡献材料已于 2026-08-19 落地（MIT，双语，与 vividmark 对齐）；repo 已于 2026-08-19 转 Public。
+**工程化（未做）：** SwiftLint / SwiftFormat 配置、GitHub Actions CI（`test.yml` / `release.yml`；官网 `pages.yml` 已落地）。`.gitignore` 已在 Phase 0 就绪。
+
+**暂缓项（V1.1+ 等排期）：** GRDB 历史记录（FR-G2）、Sparkle 自动更新、历史记录加密（P2）。
 
 ---
 
