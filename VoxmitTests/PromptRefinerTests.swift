@@ -257,7 +257,10 @@ struct PromptRefinerTests {
         // v0.12 防脑补约束（真机反馈：口述"可以了，提交吧"被结合 Terminal 标题脑补成窗口操作）
         #expect(request.messages[0].content.contains("绝不能被当作要操作"))
         #expect(request.messages[0].content.contains("口述里没有的东西一律不得出现"))
-        #expect(request.messages[0].content.contains("短促的对话/流程用语"))
+        #expect(request.messages[0].content.contains("短促的对话/流程/应允用语"))
+        #expect(request.messages[0].content.contains("绝不替换其中的动词"))
+        #expect(request.messages[0].content.contains("宁可原样保留"))
+        #expect(request.messages[0].content.contains("泛化动词"))
         #expect(request.messages[1].role == "user")
     }
 
