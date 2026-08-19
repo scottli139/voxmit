@@ -18,8 +18,6 @@ protocol ModelDownloading: Sendable {
     func existingModelFolder() -> URL?
     /// 执行下载并返回模型目录；progress 回调 0...1；实现需支持断点续传
     func download(progress: @Sendable @escaping (Double) -> Void) async throws -> URL
-    /// 删除不完整模型目录（自愈重下前置；失败不阻塞调用方）
-    func removeInvalidModel()
 }
 
 /// 模型下载管理器（@MainActor；状态经 @Published 供设置页与引擎路由订阅）
@@ -80,13 +78,14 @@ final class ModelDownloadManager: ObservableObject {
         state = downloader.existingModelFolder() != nil ? .ready : .notStarted
     }
 
-    /// 模型激活/加载失败时自愈：删除不完整产物目录（强制干净重下）→ 打回失败态
-    /// （设置页可重试、不再误显示"已就绪"）→ 每会话自动重试下载一次（防循环：
-    /// 自动重试后再失败则停在 failed 态等手动重试）。
+    /// 模型激活/加载失败时回退状态：打回失败态（设置页可重试、不再误显示"已就绪"）
+    /// → 每会话自动重试下载一次（防循环闸：自动重试后再失败则停在 failed 态等手动重试）。
     /// 幂等；下载进行中不打断。failed 态 resolve 落 speech，不会再次激活，无死循环。
+    ///
+    /// 注意：不删除模型目录——激活失败可能是网络/资产缺失等非损坏原因（如 tokenizer 需联网），
+    /// 且自实现下载器重试自带完整性校验（完整文件跳过、半截续传、缺文件补齐），无需删除。
     func markInvalidModel(reason: String) {
         guard downloadTask == nil else { return }
-        downloader.removeInvalidModel()
         state = .failed(reason)
         if !autoRetryUsed {
             autoRetryUsed = true

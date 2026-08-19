@@ -111,8 +111,9 @@ Voxmit 需要三项系统权限；缺失时会降级运行而不是崩溃：
 - **Q: 录音内容会被上传吗？** A: 默认不会。转写在本地完成（WhisperKit）；只有"润色"一步会把转写文本发给你自己配置的 LLM 端点，且可在设置中整体关闭。
 - **Q: 录音文件保存在哪？** A: 不保存。录音只存内存，处理完即释放。
 - **Q: 热键与其他 App（如微信语音输入）的快捷键冲突怎么办？** A: 设置页「热键」换成右 Command / 右 Shift / Fn 预设即可，即时生效；因冲突干扰导致的热键失灵会自动恢复（约 5 秒内），无需重启。
-- **Q: 本地模型下载失败/超时怎么办？** A: 网络无法访问 huggingface.co 时会自动回退 hf-mirror.com 镜像重试一次（失败信息会注明两个端点），仍失败可在设置页「转写」区点「重试」继续（断点续传，不从头下载；后台传输服务不可用时还会自动回退前台下载，无需干预）。强制指定端点（无界面，默认 auto）：`defaults write com.voxmit.app asr.modelRepoEndpoint -string hf-mirror`（可选 huggingface / auto）。
+- **Q: 本地模型下载失败/超时怎么办？** A: 网络无法访问 huggingface.co 时会自动回退 hf-mirror.com 镜像重试一次（失败信息会注明两个端点），仍失败可在设置页「转写」区点「重试」继续（断点续传，不从头下载）。强制指定端点（无界面，默认 auto）：`defaults write com.voxmit.app asr.modelRepoEndpoint -string hf-mirror`（可选 huggingface / auto）。
 - **Q: Speech 兜底转写失败提示听写相关？** A: 系统 Speech 兜底引擎依赖 macOS 的「听写」服务：请在 系统设置 → 键盘 → 听写 中开启（与语音识别权限是两回事）；**识别中文还需在 听写 → 语言 中添加「中文（普通话）」**。兜底默认按中文识别；如需改为英文等，可执行 `defaults write com.voxmit.app asr.speechLocale -string en-US`（无界面，默认 zh-CN）。WhisperKit 本地模型下载完成后默认不再使用 Speech，不受此限。
+- **Q: WhisperKit 把中文识别成英文怎么办？** A: 短音频（尤其重复音节）自动语言检测不可靠，当前版本已默认锁定中文识别（中英文混说不受影响，纯英文也能正常转）。如需恢复自动检测：`defaults write com.voxmit.app asr.whisperLanguage -string auto`（无界面，默认 zh）。
 - **Q: 如何查看诊断日志？** A: 三个途径——① 设置页「诊断」区点「导出诊断日志…」导出文件（推荐，发给开发者排查）；② 日志同时写在本地 `~/Library/Application Support/Voxmit/Logs/`（按日滚动，保留最近 7 个文件），可直接用文本编辑器阅读；③ 系统工具：Console.app 过滤 subsystem `com.voxmit.app`，或 `log show --predicate 'subsystem == "com.voxmit.app"' --last 1h`（实时跟踪换成 `log stream`）。
 - **Q: 系统设置里权限开关已打开，自检页仍显示"未授权"？** A: 先完全退出 Voxmit 再启动（授权结果有进程内缓存）。仍不行时（开发构建常见）：在系统设置中把 Voxmit 从该权限列表"−"移除，终端执行 `tccutil reset Accessibility com.voxmit.app`（辅助功能为例），再用"+"重新添加当前 App 并打开开关，重启 App。开发构建每次重新编译后授权可能失效，需重做一次。
 

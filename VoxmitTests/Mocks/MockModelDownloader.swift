@@ -15,14 +15,8 @@ final class MockModelDownloader: ModelDownloading, @unchecked Sendable {
 
     private(set) var downloadCallCount = 0
     private(set) var reportedProgress: [Double] = []
-    private(set) var removeInvalidModelCallCount = 0
 
     func existingModelFolder() -> URL? { existingFolder }
-
-    func removeInvalidModel() {
-        removeInvalidModelCallCount += 1
-        existingFolder = nil // 模拟删除：目录不再存在
-    }
 
     func download(progress: @Sendable @escaping (Double) -> Void) async throws -> URL {
         downloadCallCount += 1

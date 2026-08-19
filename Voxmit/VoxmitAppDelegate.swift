@@ -62,7 +62,8 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
 
     /// WhisperKit 引擎（模型就绪后激活）
     private(set) lazy var whisperKitEngine = WhisperKitTranscriptionEngine(
-        modelFolderProvider: { [weak self] in await self?.modelDownloadManager.modelFolder }
+        modelFolderProvider: { [weak self] in await self?.modelDownloadManager.modelFolder },
+        downloadBase: Self.modelsDirectory
     )
 
     /// 引擎路由器：Pipeline 持有的稳定引用，运行时热切换

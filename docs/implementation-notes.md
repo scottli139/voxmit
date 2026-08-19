@@ -32,10 +32,9 @@
 - **触发场景备忘**：热键冲突干扰、tap 临时禁用（系统负载/超时）、安全输入（密码框聚焦）。
 
 ### 模型"已就绪"但永远 Speech 兜底（就绪误判卡死，2026-08-18 已修复）
-
 - **现象**：首次下载（官方端点超时）留下残骸目录后，设置页显示"模型已就绪"，但生效引擎永远是 Speech；第一次修复（≥1 个 `.mlmodelc` 校验）仍不彻底——残骸含部分 `.mlmodelc` 目录包（如只有 MelSpectrogram），照样放行，重启后循环复发（真机日志实锤 `AudioEncoder.mlmodelc` 缺失）。
 - **根因链**（三者叠加才成卡死，任一环节单独存在都不致命）：① 就绪校验太弱——校验强度必须与"激活成功的必要条件"对齐（完整产物集，缺一不可）；② `startDownloadIfNeeded()` 幂等 no-op——ready 态把镜像下载永远短路；③ 激活 `loadModels()` 加载残骸失败 → catch 保持 Speech。
-- **修复**：`ModelFolderValidator.isReady` 要求完整产物集（`config.json` + `AudioEncoder/MelSpectrogram/TextDecoder.mlmodelc` 三个目录包；whisperkit-coreml 全变体 tiny/small/large-v3 同构，写死）；`markInvalidModel` 自愈链——`ModelDownloading.removeInvalidModel()` 删除按名匹配的变体目录（不做就绪校验，残骸也要命中；删除失败不阻塞状态回退；不删不行，否则 Downloader 认为文件完整、重试拿同一坏文件）→ 打回 failed → **每会话自动重试下载一次**（`autoRetryUsed` 会话闸防循环，用尽后停 failed 等手动重试）。
+- **修复**：`ModelFolderValidator.isReady` 要求完整产物集（`config.json` + `AudioEncoder/MelSpectrogram/TextDecoder.mlmodelc` 三个目录包；whisperkit-coreml 全变体 tiny/small/large-v3 同构，写死）；`markInvalidModel` 自愈链——打回 failed → **每会话自动重试下载一次**（`autoRetryUsed` 会话闸防循环，用尽后停 failed 等手动重试）。**2026-08-18 去删除化**：初版会先删残骸目录强制重下，已撤——激活失败可能是网络/tokenizer 资产缺失等非损坏原因，删目录会毁掉好文件；自实现下载器重试自带完整性校验（完整文件跳过、半截续传、缺文件补齐），无需删除。
 - **教训**：幂等短路（ready 不再下载）+ 弱校验 + 静默兜底（catch 只切换不反馈）三者叠加会藏死状态机；兜底路径必须有可见的状态回退出口，且"重试"必须拿到干净的输入（删除坏产物）。
 
 ### 设置窗口不置顶（LSUIElement，2026-08-18 已修复）
@@ -55,6 +54,7 @@
 
 - **现象**：镜像端点下载失败"Lost connection to background transfer service"（NSURLErrorDomain -997 = `NSURLErrorBackgroundSessionWasDisconnected`）——本机 nsurlsessiond 不可用（与 logd 损坏同源的迁移机环境特例）。
 - **修复**：下载器端点循环内，单端点先后台 session（`useBackgroundSession: true`），捕获 -997（**按错误码判定，不匹配文案**；SDK 里常量名是 `NSURLErrorBackgroundSessionWasDisconnected`，Swift 侧 `NSURLErrorBackgroundSessionWasDisconnected` / `URLError.Code.backgroundSessionWasDisconnected` 均可用）后同端点前台 session 重试一次，打点注明会话类型；不影响端点间回退顺序；取消不回退。前台 session 的断点续传仍由 incomplete 文件机制保证，跨启动续传不受影响。
+- **2026-08-18 已废弃**：随自实现下载器（见下节"模型下载三连根因"）全程前台 session，该回退逻辑已移除；此条留作 -997 判定口径存档。
 - **注意**：-997 在这台机器是环境特例（nsurlsessiond 坏）；用户机器上罕见，但回退路径普适。
 
 ### Speech 兜底识别中文出英文胡话（locale 与听写语言资产，2026-08-18 已修复）
@@ -63,6 +63,20 @@
 - **修复**：`SFSpeechRecognizer(locale:)` 取设置键 `asr.speechLocale`（默认 `zh-CN`，本产品主场景中文口述+夹英文术语；WhisperKit 天然中英混识不受此限）；`SpeechLocaleResolver` 纯解析（空/空白回退 zh-CN；有效性由识别器初始化与端侧资产检查兜底）。
 - **端侧语言资产依赖**：zh-CN 端侧识别要求系统「听写 → 语言」里已添加中文（资产不在则 `supportsOnDeviceRecognition == false`）。两条边界分别映射可操作文案：`localeUnsupported`（`SFSpeechRecognizer(locale:)` 返回 nil）与 `onDeviceLanguageMissing`（端侧资产缺失）——均指引去 系统设置 → 键盘 → 听写，并注明等 WhisperKit 模型就绪即不受此限。`requiresOnDeviceRecognition = true` 不变（隐私口径：端侧优先，不走 Apple 服务器）。
 - **教训**：Speech 兜底三层依赖都要兜底文案——TCC 权限（授权弹窗）、系统听写开关、听写语言资产；locale 不写死英文是默认陷阱。
+
+### HUD 尺寸双重驱动递归栈溢出（2026-08-19 线上崩溃，已修复）
+
+- **崩溃报告要点**：EXC_BAD_ACCESS / "Thread stack size exceeded due to excessive recursion"（主线程栈溢出）；调用栈 `NSHostingView.updateAnimatedWindowSize(_:)` → `windowDidLayout()` → `NSWindow _setFrameCommon:display:` → layout → 回到 `updateAnimatedWindowSize`，循环至栈爆；触发于 HUD 显示多行反馈文案撑大面板后约 40 秒。
+- **根因**：HUD 截断修复时给面板**同时**接了两套尺寸驱动——`NSHostingController.sizingOptions = .preferredContentSize`（启用 AppKit 的 `updateAnimatedWindowSize`，自动跟内容动画改窗）+ KVO 订阅 `preferredContentSize` 手动 `setContentSize`。KVO 在 layout 过程中同步触发，同步 `setContentSize` 又在 layout 回调里再开 `setFrameCommon` → 两套互相触发 layout 直至栈爆（0.5pt 容差挡不住 SwiftUI 的动画尺寸调整参与循环）。
+- **修复**：① 移除 `sizingOptions`（掐掉 AppKit 自动驱动——递归源）；② resize 一律经主队列**异步合并派发**（连续变化只应用最后一次，`DispatchQueue.main.async` 打断同步递归链）；③ 尺寸计算改为"文案属性变化（阶段/报告/提示条）→ `sizeThatFits` → 同一派发通道"，电平高频不订阅；钳制/容差逻辑保留（HUDLayout 160–420、高度不封顶、0.5pt 容差）。
+- **教训**：**layout 回调（KVO/windowDidLayout）里同步改 window frame 就是递归源**——窗口尺寸调整永远异步派发；同一面板的尺寸只能有一条驱动通道，AppKit 自动驱动与手动驱动不可并存。
+
+### WhisperKit 短音频语言误判（自动检测不可靠 → 锁 zh，2026-08-19 已修复）
+
+- **现象**：2 秒中文"喂喂喂123123"被识别为英文 "We we we year three year three"——未指定语言时 Whisper 自动检测，短而重复的音节极易误判。
+- **修复**：`kit.transcribe(audioArray:decodeOptions:)` 传 `DecodingOptions(language:)`，取设置键 `asr.whisperLanguage`（默认 `"zh"` 锁中文，`"auto"` 恢复自动检测）；`WhisperLanguageResolver` 纯解析。
+- **API 结论（包源码核实）**：`DecodingOptions.language: String?`（Configurations.swift:159），取 ISO 639-1 码（"zh"/"en"/"ja"…），`Constants.languageCodes` 为合法集（"chinese"/"mandarin" 亦映射到 "zh"）；nil = 自动检测（`options.language == nil` 走检测分支，TextDecoder.swift:998）。
+- **注意**：锁中文后中英文混识不受影响（纯英文音频仍转英文，只是检测不再摇摆）；转写日志已补 `language=` 字段供识别质量排查。
 
 ## 架构要点
 
@@ -109,12 +123,20 @@
 
 ### 本地转写（Phase 5，FR-C1）
 
-- **WhisperKit 0.18 API 要点**（读包源码核实，勿凭记忆）：`WhisperKit(_ config:) async throws` + `loadModels()`；转写 `transcribe(audioArray: [Float], decodeOptions:) async throws -> [TranscriptionResult]`（输入即 16kHz Float，正好对接 AudioCapture 产出）；模型下载用静态方法 `WhisperKit.download(variant:downloadBase:useBackgroundSession:progressCallback:)`——**选型结论：用内置下载而非自实现 URLSession**，底层 swift-transformers `Downloader` 自带断点续传（incomplete 文件续传）与 Foundation `Progress` 回调，多文件快照与格式由官方维护；落盘目录约定 `downloadBase/models/argmaxinc/whisperkit-coreml/openai_whisper-<variant>`（HubApi.localRepoLocation）。
+- **WhisperKit 0.18 API 要点**（读包源码核实，勿凭记忆）：`WhisperKit(_ config:) async throws` + `loadModels()`；转写 `transcribe(audioArray: [Float], decodeOptions:) async throws -> [TranscriptionResult]`（输入即 16kHz Float，正好对接 AudioCapture 产出）；落盘目录约定 `downloadBase/models/argmaxinc/whisperkit-coreml/openai_whisper-<variant>`。**2026-08-18 决策反转：弃用 `WhisperKit.download`，改自实现 `ModelRepoDownloader`**（根因见"模型下载三连根因"节）——此前"不重复造轮子"的依据（断点续传/进度/多文件快照官方维护）在镜像网络下失效（metadata 校验死 + tokenizer 独立联网），自实现后这两块全部可控；激活时 `WhisperKitConfig(downloadBase:modelFolder:)` 显式锚定 Models 目录（tokenizer 搜索路径）。
 - 落盘校验分层：下载返回目录存在性（管理器）+ `loadModels()` 成功（引擎激活）兜底；不做逐文件哈希。
 - **Swift 6 并发坑两则**：① @MainActor 类不能直接遵守继承了 Sendable 的协议（"conformance crosses into main actor-isolated code"）——Router 这类需要跨域读的持有器改非隔离类 + NSLock（写主线程断言、读任意线程）；② `@Sendable` 闭包参数仍须显式 `@escaping`（函数型参数默认非逃逸）。
 - Speech 兜底引擎引入**第四个 TCC 权限**（语音识别，`NSSpeechRecognitionUsageDescription` 已入 Info.plist）：`SFSpeechRecognizer.authorizationStatus()` notDetermined 时才请求；`requiresOnDeviceRecognition = true` 前查 `supportsOnDeviceRecognition`；识别回调可能多次返回，continuation 需单次 resume 保护 + 取消时映射 CancellationError（Pipeline 的 Esc 路径期望它）。
 - 占位注入改 `PlaceholderClipboardInjector`（仅写剪贴板返回 `.clipboardOnly`）：让转写文字在 Phase 6/8 之前即可手动粘贴使用；NSPasteboard 约定主线程访问（协议非隔离 async 会跳池线程，须 `await MainActor.run`）。
-- **HF 端点回退（2026-08-18 真机）**：huggingface.co 在国内网络不可达（curl 000）；`WhisperKit.download(variant:…, endpoint:)` 支持自定义端点（HubApi 构造参数 endpoint，另支持 `HF_ENDPOINT` 环境变量），无需 fork。落地：官方 → hf-mirror.com 自动回退（`asr.modelRepoEndpoint` 键：unset/auto=回退链，huggingface/hf-mirror=强制，无设置页 UI）；取消（CancellationError）不回退。断点续传跨端点有效：swift-transformers `Downloader` 的 incomplete 文件按**本地目标路径**记录（与域名无关）。LFS 重定向的 CDN 域名差异无碍（每个文件经端点入口重定向，续传以本地文件尺寸为准）。
+- **HF 端点回退（2026-08-18 真机）**：huggingface.co 在国内网络不可达（curl 000）；`WhisperKit.download(variant:…, endpoint:)` 支持自定义端点（HubApi 构造参数 endpoint，另支持 `HF_ENDPOINT` 环境变量），无需 fork。落地：官方 → hf-mirror.com 自动回退（`asr.modelRepoEndpoint` 键：unset/auto=回退链，huggingface/hf-mirror=强制，无设置页 UI）；取消（CancellationError）不回退。断点续传跨端点有效：incomplete 文件按**本地目标路径**记录（与域名无关）。端点链机制沿用至自实现下载器；下载执行本体已替换（见下节）。
+
+### 模型下载三连根因与自实现下载器（2026-08-18 已修复）
+
+- **根因一：metadata 校验死**。swift-transformers `HubApi.getFileMetadata` 从 HEAD 响应取 `X-Linked-Size ?? Content-Length` 作 size，缺则抛 `invalidMetadataError`（无文件名、不可定位）。hf-mirror 的 resolve-cache 对非 LFS 小文件的 HEAD **经常性缺 Content-Length**（实测 config.json 必现 size=nil）→ 小文件必挂、大文件（302 绝对重定向头部齐全）正常，整体确定性失败。官方站无 resolve-cache 层无此问题，但本网络被墙不可用。
+- **根因二：tokenizer 独立网络依赖**。`WhisperKit.loadModels()` → `loadTokenizerIfNeeded()` 需 tokenizer 文件（tokenizer.json + tokenizer_config.json，属另一仓库 `openai/whisper-<variant>`），本地找不到就联网下载——被墙环境激活必挂。已验证的离线解法：两文件放进模型目录根（`openai_whisper-small/`），`additionalSearchPaths` 含 modelFolder 命中后完全离线（真机验证：ANE 编译 104s 后激活成功）。
+- **根因三（设计失误，已撤）**：markInvalidModel 初版会删除变体目录——激活失败可能是网络原因，删目录毁掉 484MB 好文件。
+- **自实现下载器**（`Modules/Transcription/ModelRepoDownloader.swift` + `URLSessionRepoHTTPClient.swift`）：tree API 拿清单（`GET <endpoint>/api/models/<repo>/tree/main/<variant>?recursive=true`，大小取 size 字段）；逐文件 `GET <endpoint>/<repo>/resolve/main/<path>`（`.partial` + `Range: bytes=N-` 续传 + 完成校验 + 原子移动，**不依赖 HEAD**）；tokenizer 同法下载 `openai/whisper-<variant>` 两文件放模型目录根；单文件失败重试 2 次（退避 1s/3s，PipelineClock 注入）；取消抛 CancellationError 不重试。幂等重入：完整文件跳过（原子移动落盘即完整）、完整 partial 直接移动（崩在移动前的恢复）、半截 partial 续传。进度聚合 `DownloadProgressTracker`：总字节随响应动态回填（镜像小文件无大小属正常）。可观测性：清单/每文件完成（名+大小+耗时）/失败原因均带端点打点。
+- **教训**：依赖的"隐形网络面"要全部摸清（模型 + tokenizer 是两个仓库）；上游库的环境假设（HEAD 头部齐全）在你的目标网络（镜像 cache 层）不成立时，果断自实现——决策反转不可耻，诊断可见性是底线。
 
 ### 日志设施（2026-08-18，产品级）
 

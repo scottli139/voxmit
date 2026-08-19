@@ -176,25 +176,20 @@ struct ModelRepoEndpointResolverTests {
 }
 
 /// 下载器端点回退（mock 执行点，零真实网络）
+/// 下载器端点回退（mock 执行点，零真实网络）
 struct WhisperKitModelDownloaderTests {
-
-    /// 单次尝试记录（端点 + 会话类型）
-    private struct Attempt: Equatable {
-        let endpoint: ModelRepoEndpoint
-        let background: Bool
-    }
 
     /// 执行点记录器（@Sendable 闭包内可变访问，测试内串行）
     private final class ExecutorRecorder: @unchecked Sendable {
-        private(set) var attempts: [Attempt] = []
-        /// 行为（默认成功返回 /tmp）；参数为（端点，是否后台 session）
-        var behavior: (ModelRepoEndpoint, Bool) throws -> URL = { _, _ in URL(fileURLWithPath: "/tmp") }
+        private(set) var attempts: [ModelRepoEndpoint] = []
+        /// 各端点行为（默认成功返回 /tmp）
+        var behavior: (ModelRepoEndpoint) throws -> URL = { _ in URL(fileURLWithPath: "/tmp") }
 
         func makeExecutor() -> WhisperKitModelDownloader.DownloadExecutor {
-            { _, endpoint, _, useBackgroundSession, progress in
-                self.attempts.append(Attempt(endpoint: endpoint, background: useBackgroundSession))
+            { _, endpoint, _, progress in
+                self.attempts.append(endpoint)
                 progress(1.0)
-                return try self.behavior(endpoint, useBackgroundSession)
+                return try self.behavior(endpoint)
             }
         }
     }
@@ -213,7 +208,7 @@ struct WhisperKitModelDownloaderTests {
 
     @Test func download_primaryFails_mirrorSucceeds() async throws {
         let recorder = ExecutorRecorder()
-        recorder.behavior = { endpoint, _ in
+        recorder.behavior = { endpoint in
             if endpoint == .huggingface { throw NSError(domain: "mock", code: -1001) } // 超时
             return URL(fileURLWithPath: "/tmp")
         }
@@ -221,17 +216,13 @@ struct WhisperKitModelDownloaderTests {
 
         let folder = try await downloader.download { _ in }
 
-        // 官方失败后自动回退镜像（均后台 session）
-        #expect(recorder.attempts == [
-            Attempt(endpoint: .huggingface, background: true),
-            Attempt(endpoint: .hfMirror, background: true),
-        ])
+        #expect(recorder.attempts == [.huggingface, .hfMirror]) // 官方失败后自动回退镜像
         #expect(folder.lastPathComponent == "tmp")
     }
 
     @Test func download_bothFail_throwsCombinedError() async {
         let recorder = ExecutorRecorder()
-        recorder.behavior = { _, _ in throw NSError(domain: "mock", code: -1001, userInfo: [NSLocalizedDescriptionKey: "连接超时"]) }
+        recorder.behavior = { _ in throw NSError(domain: "mock", code: -1001, userInfo: [NSLocalizedDescriptionKey: "连接超时"]) }
         let downloader = makeDownloader(chain: [.huggingface, .hfMirror], recorder: recorder)
 
         do {
@@ -254,7 +245,7 @@ struct WhisperKitModelDownloaderTests {
 
     @Test func download_cancelled_noFallback() async {
         let recorder = ExecutorRecorder()
-        recorder.behavior = { _, _ in throw CancellationError() }
+        recorder.behavior = { _ in throw CancellationError() }
         let downloader = makeDownloader(chain: [.huggingface, .hfMirror], recorder: recorder)
 
         do {
@@ -266,7 +257,7 @@ struct WhisperKitModelDownloaderTests {
             Issue.record("错误类型不符：\(error)")
         }
         // 取消不回退：镜像端点未被尝试
-        #expect(recorder.attempts == [Attempt(endpoint: .huggingface, background: true)])
+        #expect(recorder.attempts == [.huggingface])
     }
 
     @Test func download_forcedEndpoint_onlyTriesIt() async throws {
@@ -278,73 +269,7 @@ struct WhisperKitModelDownloaderTests {
 
         _ = try await downloader.download { _ in }
 
-        #expect(recorder.attempts == [Attempt(endpoint: .hfMirror, background: true)])
-    }
-
-    // MARK: - 后台传输服务不可用（-997）回退前台 session
-
-    @Test func download_backgroundLostConnection_foregroundRetrySameEndpoint() async throws {
-        let recorder = ExecutorRecorder()
-        let lostBackground = NSError(
-            domain: NSURLErrorDomain,
-            code: NSURLErrorBackgroundSessionWasDisconnected // -997
-        )
-        recorder.behavior = { _, background in
-            if background { throw lostBackground }
-            return URL(fileURLWithPath: "/tmp")
-        }
-        let downloader = makeDownloader(chain: [.huggingface], recorder: recorder)
-
-        let folder = try await downloader.download { _ in }
-
-        // 同端点后台→前台回退，不进入下一端点
-        #expect(recorder.attempts == [
-            Attempt(endpoint: .huggingface, background: true),
-            Attempt(endpoint: .huggingface, background: false),
-        ])
-        #expect(folder.lastPathComponent == "tmp")
-    }
-
-    @Test func download_backgroundSucceeds_noForegroundAttempt() async throws {
-        let recorder = ExecutorRecorder()
-        let downloader = makeDownloader(chain: [.huggingface, .hfMirror], recorder: recorder)
-
-        _ = try await downloader.download { _ in }
-
-        #expect(recorder.attempts == [Attempt(endpoint: .huggingface, background: true)])
-    }
-
-    @Test func download_nonTransportError_noForegroundRetry() async {
-        let recorder = ExecutorRecorder()
-        recorder.behavior = { _, _ in throw NSError(domain: "mock", code: -1001) } // 普通超时
-        let downloader = makeDownloader(chain: [.huggingface], recorder: recorder)
-
-        do {
-            _ = try await downloader.download { _ in }
-            Issue.record("应抛错")
-        } catch {
-            // 预期
-        }
-        // 非 -997 不触发前台回退
-        #expect(recorder.attempts == [Attempt(endpoint: .huggingface, background: true)])
-    }
-}
-
-/// -997 判定（按错误码，不匹配文案）
-struct DownloadTransportErrorTests {
-
-    @Test func isLostBackgroundTransferConnection_matrix() {
-        #expect(WhisperKitModelDownloader.isLostBackgroundTransferConnection(
-            NSError(domain: NSURLErrorDomain, code: NSURLErrorBackgroundSessionWasDisconnected)
-        ))
-        // 真超时不算（huggingface 被墙的正确行为）
-        #expect(!WhisperKitModelDownloader.isLostBackgroundTransferConnection(
-            NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
-        ))
-        // 同码不同域不算
-        #expect(!WhisperKitModelDownloader.isLostBackgroundTransferConnection(
-            NSError(domain: "mock", code: -997)
-        ))
+        #expect(recorder.attempts == [.hfMirror])
     }
 }
 
@@ -385,6 +310,29 @@ struct SpeechLocaleResolverTests {
     @Test func resolve_blankOrWhitespace_fallsBackToZhCN() {
         #expect(SpeechLocaleResolver.resolve(setting: "") == "zh-CN")
         #expect(SpeechLocaleResolver.resolve(setting: "   ") == "zh-CN")
+    }
+}
+
+/// Whisper 转写语言锁定解析（asr.whisperLanguage，默认 zh 锁中文）
+struct WhisperLanguageResolverTests {
+
+    @Test func resolve_unset_defaultsToZh() {
+        #expect(WhisperLanguageResolver.resolve(setting: nil) == "zh")
+    }
+
+    @Test func resolve_auto_returnsNilForAutoDetect() {
+        #expect(WhisperLanguageResolver.resolve(setting: "auto") == nil)
+        #expect(WhisperLanguageResolver.resolve(setting: "AUTO") == nil)
+    }
+
+    @Test func resolve_explicitCode_passesThrough() {
+        #expect(WhisperLanguageResolver.resolve(setting: "en") == "en")
+        #expect(WhisperLanguageResolver.resolve(setting: "ja") == "ja")
+    }
+
+    @Test func resolve_blank_fallsBackToZh() {
+        #expect(WhisperLanguageResolver.resolve(setting: "") == "zh")
+        #expect(WhisperLanguageResolver.resolve(setting: "  ") == "zh")
     }
 }
 
@@ -533,24 +481,6 @@ struct ModelFolderReadinessTests {
         #expect(downloader.existingModelFolder() == nil)
     }
 
-    @Test func removeInvalidModel_deletesVariantDirectoryEvenIfWreckage() throws {
-        let base = try makeRepoDir()
-        defer { try? FileManager.default.removeItem(at: base) }
-        // 残骸目录（不就绪）：自愈删除也必须命中（不做就绪校验）
-        let variantDir = base
-            .appending(path: "models/argmaxinc/whisperkit-coreml/openai_whisper-small")
-        try FileManager.default.createDirectory(
-            at: variantDir.appending(path: "MelSpectrogram.mlmodelc"), withIntermediateDirectories: true
-        )
-        let downloader = WhisperKitModelDownloader(
-            variantProvider: { "small" }, downloadBase: base, endpointChain: { [.huggingface] }
-        )
-
-        downloader.removeInvalidModel()
-
-        #expect(!FileManager.default.fileExists(atPath: variantDir.path))
-    }
-
     @Test func existingModelFolder_variantWreckage_returnsNil() throws {
         let base = try makeRepoDir()
         defer { try? FileManager.default.removeItem(at: base) }
@@ -580,7 +510,8 @@ struct ModelFolderReadinessTests {
     }
 }
 
-/// 模型激活失败自愈（"已就绪 + 永远 Speech"卡死修复：删残骸 + 每会话自动重试一次）
+/// 模型激活失败自愈（"已就绪 + 永远 Speech"卡死修复：每会话自动重试一次；不删目录——
+/// 激活失败可能是网络/资产缺失等非损坏原因，重试下载自带完整性校验）
 @MainActor
 struct ModelInvalidationTests {
 
@@ -588,7 +519,7 @@ struct ModelInvalidationTests {
         for _ in 0..<12 { await Task { @MainActor in }.value }
     }
 
-    @Test func markInvalidModel_firstTime_deletesFolderAndAutoRetries() async {
+    @Test func markInvalidModel_firstTime_autoRetriesAndRecovers() async {
         let downloader = MockModelDownloader()
         downloader.existingFolder = URL(fileURLWithPath: "/tmp")
         let manager = ModelDownloadManager(downloader: downloader)
@@ -596,9 +527,6 @@ struct ModelInvalidationTests {
 
         manager.markInvalidModel(reason: "模型文件不完整")
 
-        // 自愈前置：删除被调用（mock 模拟目录已删）
-        #expect(downloader.removeInvalidModelCallCount == 1)
-        #expect(downloader.existingFolder == nil)
         // 自动重试已启动（failed 是瞬态，立即进入 downloading）
         guard case .downloading = manager.state else {
             Issue.record("期望 downloading（自动重试中），实际 \(manager.state)")

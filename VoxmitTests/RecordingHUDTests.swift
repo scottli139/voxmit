@@ -35,6 +35,36 @@ struct HUDLayoutTests {
     }
 }
 
+/// 波形区几何（限宽滚动窗口，不溢出盖字）
+struct WaveformLayoutTests {
+
+    @Test func visibleCapacity_fitsFrame() {
+        // 容量 × 条宽 + (容量-1) × 间距 不超过可视宽度（真机 bug：24 条溢出盖到文字上）
+        let capacity = WaveformLayout.visibleCapacity
+        let used = CGFloat(capacity) * WaveformLayout.barWidth
+            + CGFloat(capacity - 1) * WaveformLayout.spacing
+        #expect(used <= WaveformLayout.width)
+        // 再加一条必然超出 → 当前容量即上限
+        let oneMore = used + WaveformLayout.barWidth + WaveformLayout.spacing
+        #expect(oneMore > WaveformLayout.width)
+        #expect(capacity == 17)
+    }
+
+    @Test func visibleBars_overCapacity_keepsNewest() {
+        // 24 条历史（LevelHistory.capacity）只画最近 17 条，旧条淘汰
+        let bars = (0..<LevelHistory.capacity).map { Float($0) }
+        let visible = WaveformLayout.visibleBars(bars)
+        #expect(visible.count == WaveformLayout.visibleCapacity)
+        #expect(visible.first == Float(LevelHistory.capacity - WaveformLayout.visibleCapacity))
+        #expect(visible.last == bars.last)
+    }
+
+    @Test func visibleBars_underCapacity_keepsAll() {
+        let visible = WaveformLayout.visibleBars([0.1, 0.5, 0.9])
+        #expect(visible == [0.1, 0.5, 0.9])
+    }
+}
+
 /// HUD 显示策略（HUDVisibility，纯逻辑）
 struct HUDVisibilityTests {
 

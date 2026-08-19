@@ -98,6 +98,24 @@ enum HUDLayout {
     }
 }
 
+/// 波形区几何（纯逻辑可单测）：限宽 + 滚动窗口淘汰旧条，绝不溢出盖到文字区
+enum WaveformLayout {
+    static let width: CGFloat = 84
+    static let height: CGFloat = 20
+    static let barWidth: CGFloat = 3
+    static let spacing: CGFloat = 2
+
+    /// 可视宽度内最多容纳的条数（(宽+间距)/(条宽+间距)）
+    static var visibleCapacity: Int {
+        Int((width + spacing) / (barWidth + spacing))
+    }
+
+    /// 取最近 maxCount 条（滚动窗口式淘汰旧条，不挤压不溢出）
+    static func visibleBars(_ bars: [Float]) -> [Float] {
+        bars.suffix(visibleCapacity).map { $0 }
+    }
+}
+
 /// HUD 视图模型：订阅 Pipeline 与 AudioCapture，汇总为显示属性
 @MainActor
 final class RecordingHUDViewModel: ObservableObject {
@@ -217,6 +235,9 @@ struct RecordingHUDView: View {
                         // 长文案（如失败原因指引）换行展示，不截断
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
+                        // 状态切换：旧视图随内容变化即刻移除（身份显式 + 即时替换，无新旧并存）
+                        .id(model.statusText)
+                        .transition(.identity)
                     if model.showsUnrefinedBadge {
                         Text("未润色")
                             .font(.caption2)
@@ -261,16 +282,21 @@ struct RecordingHUDView: View {
         }
     }
 
-    /// 实时波形（FR-A2）：最近电平渲染为竖条
+    /// 实时波形（FR-A2）：最近电平渲染为竖条；限宽滚动窗口，绝不溢出盖字
     private var waveform: some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(Array(model.levelHistory.bars.enumerated()), id: \.offset) { _, bar in
+        HStack(alignment: .center, spacing: WaveformLayout.spacing) {
+            ForEach(
+                Array(WaveformLayout.visibleBars(model.levelHistory.bars).enumerated()),
+                id: \.offset
+            ) { _, bar in
                 RoundedRectangle(cornerRadius: 1)
-                    .frame(width: 3, height: 3 + 17 * CGFloat(bar))
+                    .frame(width: WaveformLayout.barWidth, height: 3 + 17 * CGFloat(bar))
                     .foregroundStyle(.red)
             }
         }
-        .frame(width: 84, height: 20)
+        // 右对齐：新条从右侧（贴近文字侧）进入，旧条向左滚出裁剪区
+        .frame(width: WaveformLayout.width, height: WaveformLayout.height, alignment: .trailing)
+        .clipped()
     }
 
     @ViewBuilder
@@ -316,6 +342,17 @@ final class RecordingHUDController {
                 self?.stateDidChange(state, report: pipeline.lastInjectionReport)
             }
         }.store(in: &cancellables)
+
+        // 文案内容变化（阶段/注入报告/提示条）→ 统一尺寸通道重算面板（电平高频不订阅）
+        for publisher in [viewModel.$phase.map { _ in () }.eraseToAnyPublisher(),
+                          viewModel.$report.map { _ in () }.eraseToAnyPublisher(),
+                          viewModel.$banner.map { _ in () }.eraseToAnyPublisher()] {
+            publisher
+                .sink { [weak self] _ in
+                    MainActor.assumeIsolated { self?.scheduleResizeFromContent() }
+                }
+                .store(in: &cancellables)
+        }
     }
 
     private func stateDidChange(_ state: VoicePipelineState, report: InjectionReport?) {
@@ -336,7 +373,10 @@ final class RecordingHUDController {
         let panel = ensurePanel()
         // 尺寸随内容（长文案换行后撑高），再定位（保持底部居中）
         if let hosting = panel.contentViewController as? NSHostingController<RecordingHUDView> {
-            applyContentSize(hosting.preferredContentSize)
+            let fitting = hosting.sizeThatFits(
+                in: NSSize(width: HUDLayout.maxWidth, height: .greatestFiniteMagnitude)
+            )
+            applyContentSize(fitting)
         }
         positionBottomCenter(panel)
         panel.alphaValue = 1
@@ -378,12 +418,14 @@ final class RecordingHUDController {
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
         let hostingController = NSHostingController(rootView: RecordingHUDView(model: viewModel))
-        // 内容尺寸变化（长文案换行撑高等）→ 自动重算 preferredContentSize，KVO 订阅后调整面板
-        hostingController.sizingOptions = .preferredContentSize
+        // 尺寸驱动只留一条通道（见下方 scheduleApplyContentSize 注释）：
+        // 不开 sizingOptions.preferredContentSize——它会启用 AppKit 的 updateAnimatedWindowSize
+        // 自动跟内容动画改窗，与手动 resize 互相触发 layout 直至栈溢出（2026-08-19 线上崩溃）。
+        // KVO 订阅保留兜底：若 hosting 仍维护该值则同源幂等（0.5pt 容差去重）
         sizeObserver = hostingController.publisher(for: \.preferredContentSize)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] size in
-                Task { @MainActor in self?.applyContentSize(size) }
+                self?.scheduleApplyContentSize(size)
             }
         let panel = NSPanel(contentViewController: hostingController)
         // 不抢焦点（硬要求）：点击不激活、不接受键鼠、不在 Exposé 中干扰
@@ -418,9 +460,44 @@ final class RecordingHUDController {
         guard let panel else { return }
         let clamped = HUDLayout.clampedSize(size)
         let current = panel.contentView?.frame.size ?? .zero
-        // 防 KVO → resize → 布局 → KVO 回环：尺寸未变（容差内）不重设
+        // 尺寸未变（容差内）不重设——防止任何"resize → 布局 → 再触发 resize"回环
         guard abs(clamped.width - current.width) > 0.5 || abs(clamped.height - current.height) > 0.5 else { return }
         panel.setContentSize(clamped)
         positionBottomCenter(panel)
+    }
+
+    // MARK: - 尺寸驱动单通道（2026-08-19 栈溢出崩溃修复）
+
+    private var pendingContentSize: NSSize?
+    private var contentSizeApplyScheduled = false
+
+    /// 内容变化（阶段/反馈/提示条）→ 量尺寸并走统一派发通道。
+    /// 不订阅电平（50ms 高频且不影响尺寸）；延后两拍让 SwiftUI 完成本轮布局再量。
+    func scheduleResizeFromContent() {
+        DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      let hosting = panel?.contentViewController as? NSHostingController<RecordingHUDView> else { return }
+                let fitting = hosting.sizeThatFits(
+                    in: NSSize(width: HUDLayout.maxWidth, height: .greatestFiniteMagnitude)
+                )
+                self.scheduleApplyContentSize(fitting)
+            }
+        }
+    }
+
+    /// 合并异步派发：KVO 在 layout 过程中同步触发，同步 setContentSize 会在 layout 回调里
+    /// 再开 setFrameCommon → 递归至栈溢出（EXC_BAD_ACCESS，2026-08-19 线上崩溃）。
+    /// 因此 resize 一律经主队列异步派发，且连续变化只应用最后一次。
+    private func scheduleApplyContentSize(_ size: NSSize) {
+        pendingContentSize = size
+        guard !contentSizeApplyScheduled else { return }
+        contentSizeApplyScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let size = pendingContentSize else { return }
+            contentSizeApplyScheduled = false
+            pendingContentSize = nil
+            applyContentSize(size)
+        }
     }
 }

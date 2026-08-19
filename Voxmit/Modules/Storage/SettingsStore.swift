@@ -15,6 +15,8 @@ enum SettingsKeys {
     static let asrModelRepoEndpoint = "asr.modelRepoEndpoint"
     /// Speech 兜底引擎识别语言（默认 zh-CN：主场景中文口述+夹英文术语；无设置页 UI）
     static let asrSpeechLocale = "asr.speechLocale"
+    /// WhisperKit 转写语言锁定（默认 "zh" 锁中文：短音频自动检测不可靠；"auto" = 自动检测；无设置页 UI）
+    static let asrWhisperLanguage = "asr.whisperLanguage"
     static let llmBaseURL = "llm.baseURL"
     static let llmModel = "llm.model"
     static let llmRefineEnabled = "llm.refineEnabled"
@@ -39,6 +41,7 @@ enum SettingsKeys {
             asrCustomVocabulary: [String](),
             asrModelRepoEndpoint: "auto",
             asrSpeechLocale: "zh-CN",
+            asrWhisperLanguage: "zh",
             llmBaseURL: "https://api.moonshot.cn/v1",
             llmModel: "moonshot-v1-8k",      // Moonshot 模型 ID，按服务商文档可改
             llmRefineEnabled: true,

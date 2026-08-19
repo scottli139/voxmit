@@ -32,20 +32,18 @@ enum ModelFolderValidator {
     }
 }
 
-/// WhisperKit 模型下载（ModelDownloading 实装）：用 WhisperKit 内置静态下载
-/// （swift-transformers Downloader 自带断点续传与 Progress 回调——incomplete 文件按本地
-/// 路径记录、与端点域名无关，镜像回退后续传仍有效），落盘 Application Support/Voxmit/Models。
+/// WhisperKit 模型下载（ModelDownloading 实装）：2026-08-18 起用自实现 `ModelRepoDownloader`
+/// （弃用 WhisperKit.download 的根因见 implementation-notes「HF 端点回退」与下载器章节），
+/// 落盘 Application Support/Voxmit/Models。
 ///
 /// 端点回退：按 endpointChain 顺序逐端点尝试（默认官方 → 镜像），单端点失败记录后尝试下一个；
 /// 用户取消（CancellationError）不回退直接抛出。
 struct WhisperKitModelDownloader: ModelDownloading {
-    /// 单端点下载执行点（默认 WhisperKit 内置静态下载；单测注入 mock，禁真实网络）。
-    /// `useBackgroundSession`：后台传输（nsurlsessiond）优先，调用方在 -997 时回退前台
+    /// 单端点下载执行点（默认自实现 ModelRepoDownloader；单测注入 mock，禁真实网络）
     typealias DownloadExecutor = @Sendable (
         _ variant: String,
         _ endpoint: ModelRepoEndpoint,
         _ downloadBase: URL,
-        _ useBackgroundSession: Bool,
         _ progress: @Sendable @escaping (Double) -> Void
     ) async throws -> URL
 
@@ -60,7 +58,7 @@ struct WhisperKitModelDownloader: ModelDownloading {
         variantProvider: @escaping @Sendable () -> String,
         downloadBase: URL,
         endpointChain: @escaping @Sendable () -> [ModelRepoEndpoint],
-        executeDownload: @escaping DownloadExecutor = Self.downloadWithWhisperKit
+        executeDownload: @escaping DownloadExecutor = Self.downloadWithRepoDownloader
     ) {
         self.variantProvider = variantProvider
         self.downloadBase = downloadBase
@@ -68,40 +66,23 @@ struct WhisperKitModelDownloader: ModelDownloading {
         self.executeDownload = executeDownload
     }
 
-    /// 真实下载执行点：WhisperKit 内置（HubApi 支持自定义 endpoint；HF_ENDPOINT 环境变量亦可）
-    static func downloadWithWhisperKit(
+    /// 真实下载执行点：自实现 ModelRepoDownloader（前台 URLSession，清单/续传/校验/移动）
+    static func downloadWithRepoDownloader(
         variant: String,
         endpoint: ModelRepoEndpoint,
         downloadBase: URL,
-        useBackgroundSession: Bool,
         progress: @Sendable @escaping (Double) -> Void
     ) async throws -> URL {
-        try await WhisperKit.download(
-            variant: variant,
-            downloadBase: downloadBase,
-            useBackgroundSession: useBackgroundSession,
-            endpoint: endpoint.rawValue,
-            progressCallback: { p in
-                progress(p.fractionCompleted)
-            }
-        )
+        try await ModelRepoDownloader(client: URLSessionRepoHTTPClient())
+            .download(variant: variant, endpoint: endpoint.rawValue, downloadBase: downloadBase, progress: progress)
     }
 
-    /// 后台传输服务（nsurlsessiond）不可用判定：NSURLErrorDomain -997
-    /// （NSURLErrorBackgroundSessionWasDisconnected，错误描述为 Lost connection to
-    /// background transfer service），按错误码判定、不匹配文案
-    static func isLostBackgroundTransferConnection(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        return nsError.domain == NSURLErrorDomain
-            && nsError.code == NSURLErrorBackgroundSessionWasDisconnected
-    }
-
-    /// HubApi.localRepoLocation 约定（swift-transformers Hub）：downloadBase/models/<org>/<repo>
+    /// HubApi.localRepoLocation 约定（与自实现下载器一致）：downloadBase/models/<org>/<repo>
     private var repoDirectory: URL {
         downloadBase.appending(path: "models/argmaxinc/whisperkit-coreml", directoryHint: .isDirectory)
     }
 
-    /// 按名匹配的所有变体目录（不做就绪校验——自愈删除要能命中残骸）
+    /// 按名匹配的所有变体目录
     private func variantDirectories() -> [URL] {
         let variant = variantProvider()
         guard let entries = try? FileManager.default.contentsOfDirectory(
@@ -118,58 +99,24 @@ struct WhisperKitModelDownloader: ModelDownloading {
         variantDirectories().first { ModelFolderValidator.isReady($0) }
     }
 
-    /// 自愈前置：删除按名匹配的所有变体目录（不完整/损坏产物），强制干净重下
-    /// （否则 Downloader 认为文件已完整会跳过，重试永远拿到同一份坏文件）。
-    /// 删除失败不阻塞状态回退。
-    func removeInvalidModel() {
-        for url in variantDirectories() {
-            try? FileManager.default.removeItem(at: url)
-            AppLog.notice(.download, "已删除不完整模型目录：\(url.lastPathComponent)")
-        }
-    }
-
     func download(progress: @Sendable @escaping (Double) -> Void) async throws -> URL {
         let variant = variantProvider()
         var failures: [EndpointFailure] = []
         for endpoint in endpointChain() {
             do {
-                return try await downloadOnEndpoint(endpoint, variant: variant, progress: progress)
+                AppLog.info(.download, "模型下载开始：\(variant)，端点 \(endpoint.rawValue)")
+                let folder = try await executeDownload(variant, endpoint, downloadBase, progress)
+                AppLog.info(.download, "模型下载完成：\(folder.lastPathComponent)（端点 \(endpoint.rawValue)）")
+                return folder
             } catch is CancellationError {
+                AppLog.notice(.download, "模型下载被取消")
                 throw CancellationError() // 用户取消不回退
             } catch {
+                AppLog.error(.download, "端点 \(endpoint.rawValue) 下载失败：\(error.localizedDescription)")
                 failures.append(EndpointFailure(endpoint: endpoint.rawValue, reason: error.localizedDescription))
             }
         }
         throw ModelDownloadError.allEndpointsFailed(failures)
-    }
-
-    /// 单端点下载：先后台 session；后台传输服务不可用（-997）时同端点回退前台一次。
-    /// 回退在端点循环之内，不影响端点间回退顺序；前台 session 的断点续传仍由
-    /// incomplete 文件机制保证（跨启动不受影响）。
-    private func downloadOnEndpoint(
-        _ endpoint: ModelRepoEndpoint,
-        variant: String,
-        progress: @Sendable @escaping (Double) -> Void
-    ) async throws -> URL {
-        do {
-            AppLog.info(.download, "模型下载开始：\(variant)，端点 \(endpoint.rawValue)，后台 session")
-            let folder = try await executeDownload(variant, endpoint, downloadBase, true, progress)
-            AppLog.info(.download, "模型下载完成：\(folder.lastPathComponent)（端点 \(endpoint.rawValue)，后台）")
-            return folder
-        } catch is CancellationError {
-            AppLog.notice(.download, "模型下载被取消")
-            throw CancellationError()
-        } catch {
-            guard Self.isLostBackgroundTransferConnection(error) else {
-                AppLog.error(.download, "端点 \(endpoint.rawValue) 下载失败：\(error.localizedDescription)")
-                throw error
-            }
-            AppLog.notice(.download, "后台传输服务不可用（-997），同端点回退前台 session")
-            AppLog.info(.download, "模型下载开始：\(variant)，端点 \(endpoint.rawValue)，前台 session")
-            let folder = try await executeDownload(variant, endpoint, downloadBase, false, progress)
-            AppLog.info(.download, "模型下载完成：\(folder.lastPathComponent)（端点 \(endpoint.rawValue)，前台）")
-            return folder
-        }
     }
 }
 
@@ -179,12 +126,29 @@ enum WhisperKitEngineError: LocalizedError {
     var errorDescription: String? { "WhisperKit 模型未就绪" }
 }
 
+/// Whisper 转写语言锁定解析（纯逻辑可单测）：设置键 asr.whisperLanguage。
+/// 默认 "zh" 锁中文——短音频自动语言检测不可靠（真机：2 秒重复音节被误判英文）；
+/// 锁中文后中英文混识不受影响（纯英文音频仍转英文，只是检测不再摇摆）。
+/// "auto" 恢复自动检测（传 nil）；其余值原样透传（DecodingOptions.language 取
+/// ISO 639-1 码，如 "zh"/"en"，见 WhisperKit Constants.languageCodes）。
+enum WhisperLanguageResolver {
+    static let fallback = "zh"
+
+    static func resolve(setting: String?) -> String? {
+        let raw = (setting ?? fallback).trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.isEmpty { return fallback }
+        return raw.lowercased() == "auto" ? nil : raw
+    }
+}
+
 /// WhisperKit 引擎（FR-C1 默认引擎）：模型就绪后激活（loadModels 加载到内存），
 /// 转写重计算由 WhisperKit 内部线程执行。
 final class WhisperKitTranscriptionEngine: TranscriptionEngine, @unchecked Sendable {
     let name = "whisperkit"
 
     private let modelFolderProvider: @Sendable () async -> URL?
+    /// tokenizer 搜索基准目录（WhisperKitConfig.downloadBase；我们的 Models 目录）
+    private let downloadBase: URL
     private let lock = NSLock()
     private var kit: WhisperKit?
     /// 已加载模型对应的目录（变体切换后需重载）
@@ -193,8 +157,12 @@ final class WhisperKitTranscriptionEngine: TranscriptionEngine, @unchecked Senda
     /// activationTask 对应的目标目录
     private var pendingFolder: URL?
 
-    init(modelFolderProvider: @escaping @Sendable () async -> URL?) {
+    init(
+        modelFolderProvider: @escaping @Sendable () async -> URL?,
+        downloadBase: URL
+    ) {
         self.modelFolderProvider = modelFolderProvider
+        self.downloadBase = downloadBase
     }
 
     /// 激活（幂等、并发去重）：加载模型到内存；模型目录变化（变体切换）时重新加载；
@@ -211,6 +179,7 @@ final class WhisperKitTranscriptionEngine: TranscriptionEngine, @unchecked Senda
                 AppLog.info(.transcription, "WhisperKit 模型加载中：\(folder.lastPathComponent)")
                 let startedAt = Date()
                 let config = WhisperKitConfig(
+                    downloadBase: downloadBase, // tokenizer 搜索路径锚定我们的 Models 目录
                     modelFolder: folder.path,
                     verbose: false,
                     logLevel: .error,
@@ -239,7 +208,15 @@ final class WhisperKitTranscriptionEngine: TranscriptionEngine, @unchecked Senda
         guard let kit = lock.withLock({ self.kit }) else {
             throw WhisperKitEngineError.modelNotReady
         }
-        let results = try await kit.transcribe(audioArray: samples)
+        // 语言锁定（asr.whisperLanguage，默认 zh；auto 恢复自动检测）
+        let language = WhisperLanguageResolver.resolve(
+            setting: UserDefaults.standard.string(forKey: SettingsKeys.asrWhisperLanguage)
+        )
+        AppLog.info(.transcription, "WhisperKit 转写开始：\(samples.count) 样本（≈\(samples.count / 16000) 秒），language=\(language ?? "auto")")
+        let results = try await kit.transcribe(
+            audioArray: samples,
+            decodeOptions: DecodingOptions(language: language)
+        )
         return results
             .map(\.text)
             .joined(separator: " ")
