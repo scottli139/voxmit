@@ -201,17 +201,22 @@ stateDiagram-v2
 
 - **协议（§9.1）**：`PromptRefining: Sendable`（`refine(raw:context:) async -> (text, refined)`，`refined` 标记供 HUD 角标）。
 - **实现**（`Voxmit/Modules/Refiner/`）：
-  - `PromptRefiner`：`PromptRefining` 实装——未配 Key 或 `llm.refineEnabled=false` 直出原文；隐私门（`llm.privacyAcknowledged`，首次实际发送前必挡一次，门为注入闭包）；3s 总预算（首次 1.2s + 退避 0.3s + 重试 1.5s，`withThrowingTaskGroup` 竞速）；任何异常回退 `(raw, false)`。
+  - `PromptRefiner`：`PromptRefining` 实装——未配 Key 或 `llm.refineEnabled=false` 直出原文；隐私门（`llm.privacyAcknowledged`，首次实际发送前必挡一次，门为注入闭包）；4.3s 总预算（首次 2.0s + 退避 0.3s + 重试 2.0s，`withThrowingTaskGroup` 竞速；v0.9 由 3s 放宽）；任何异常回退 `(raw, false)`。
   - `LLMClient`：`ChatCompleting: Sendable` 协议 + `OpenAIChatClient`（`POST {baseURL}/chat/completions`，Bearer 从 Keychain 读；`makeRequest/parseContent` 静态纯函数可单测）；错误分类 missingAPIKey / httpStatus / invalidResponse。
+  - `LLMPrewarmer`：LLM 连接预热（2026-08-19）——录音开始时（`VoicePipeline.handleHotkeyDown`，fire-and-forget）以共享 `llmSession` 发 `GET {baseURL}/models`（2s 超时，Bearer 鉴权，不打响应体）；与 Refiner 共用同一 URLSession 实例（独立 keep-alive 连接池），在飞防重、失败静默（DEBUG）。
   - `RefinePrompt`：§9.1 system prompt 模板原文；user message = 上下文补充块（App 名+bundleID、窗口标题、选区 ≤2KB UTF-8 安全截断）+ 口述原文。
 - **接线**：`VoxmitAppDelegate` 注入替换 `NoOpPromptRefiner`；隐私门实现为 AppDelegate 弹 NSAlert（先 `NSApp.activate()`）；旁路（FR-D4）在状态机层（Phase 2 已接入 skipRefinement）。日志 category `refiner`。
 - **规划**：润色风格配置（FR-D3）、指代消解增强（FR-D2，依赖 Phase 7 上下文）均为 P1。
 
-### 4.7 ContextCollector —— 上下文感知（规划，Phase 7）
+### 4.7 ContextCollector —— 上下文感知（已实现，Phase 7）
 
-- **协议（已定义）**：`ContextCollecting`（`snapshotTarget() -> TargetSnapshot`；§9.1）。
-- **现状**：占位 `PlaceholderContextCollector` 返回空快照（pid 0、空 bundleID/名称），等价 §4.2.5 的"无上下文"模式；HUD 目标 App 名因此暂为占位显示。
-- **规划要点（§4.2.5、§3.4.3）**：keyDown 快照 `NSWorkspace.frontmostApplication` + AX 焦点窗口标题；bundleID → `AppCategory` 适配表；松手时前台校验；无 AX 权限降级为"仅 App 名"。
+- **协议（§9.1）**：`ContextCollecting`（`snapshotTarget() -> TargetSnapshot`）。
+- **实现**（`Voxmit/Modules/Context/RealContextCollector.swift`）：
+  - `RealContextCollector`：NSWorkspace.frontmostApplication → pid/bundleID/名称（无需权限）；AX `AXFocusedWindow` → 窗口标题（需辅助功能）。降级矩阵（§4.2.5）：无 AX 权限 → 仅 App 名（windowTitle=nil）；App 无焦点窗口 → 仅 bundleID/名称；前台取不到 → "无上下文"（pid 0 + 空标识，润色仅做句式整理）。各路径打点（`.context`）。
+  - `SystemWorkspace` 协议：NSWorkspace + AX 调用隔离（单测 mock，参考 PermissionChecking 模式）；NSWorkspace 在 macOS 26 SDK 为 @MainActor 标注，实现内 `MainActor.assumeIsolated`（调用方均为 @MainActor）。
+  - `AppCategoryMapper`（纯逻辑）：bundleID → terminal/editor/browser/other 适配表（Terminal/iTerm2/Warp/Ghostty/kitty、VSCode/Cursor/Zed/Xcode/Sublime/JetBrains 前缀、Safari/Chrome/Firefox/Brave/Edge/Arc）；AI CLI 无独立 bundleID，归宿主终端分类。
+- **松手时前台校验（§3.4.3）**：`handleHotkeyUp` 再快照一次，与 keyDown 快照不同（bundleID 或 pid 变化）→ NOTICE 打点并**以松手时前台为准**（注入目标与润色上下文均用新快照）；Pipeline 的 VoiceContext.appCategory 由 AppCategoryMapper 真实分类（替换 .other 硬编码）。
+- **需求依据**：§4.2.5、§3.4.3、FR-E1、FR-F5。选区文本（FR-E2）、AI CLI 识别（FR-E3）为 P1/P2 未做。
 
 ### 4.8 Injector —— 结果注入（规划，Phase 8）
 

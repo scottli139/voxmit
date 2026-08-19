@@ -158,9 +158,19 @@
 - **自实现下载器**（`Modules/Transcription/ModelRepoDownloader.swift` + `URLSessionRepoHTTPClient.swift`）：tree API 拿清单（`GET <endpoint>/api/models/<repo>/tree/main/<variant>?recursive=true`，大小取 size 字段）；逐文件 `GET <endpoint>/<repo>/resolve/main/<path>`（`.partial` + `Range: bytes=N-` 续传 + 完成校验 + 原子移动，**不依赖 HEAD**）；tokenizer 同法下载 `openai/whisper-<variant>` 两文件放模型目录根；单文件失败重试 2 次（退避 1s/3s，PipelineClock 注入）；取消抛 CancellationError 不重试。幂等重入：完整文件跳过（原子移动落盘即完整）、完整 partial 直接移动（崩在移动前的恢复）、半截 partial 续传。进度聚合 `DownloadProgressTracker`：总字节随响应动态回填（镜像小文件无大小属正常）。可观测性：清单/每文件完成（名+大小+耗时）/失败原因均带端点打点。
 - **教训**：依赖的"隐形网络面"要全部摸清（模型 + tokenizer 是两个仓库）；上游库的环境假设（HEAD 头部齐全）在你的目标网络（镜像 cache 层）不成立时，果断自实现——决策反转不可耻，诊断可见性是底线。
 
+### 上下文快照（Phase 7，FR-E1/FR-F5）
+
+- **NSWorkspace 并发标注坑**：`NSWorkspace.shared` 在 macOS 26 SDK 为 @MainActor 标注，非隔离协议方法（`ContextCollecting.snapshotTarget`）里直接访问会编译报错——在 `NSWorkspaceSystem.frontmostApp()` 内用 `MainActor.assumeIsolated` 收敛（调用方均为 @MainActor：Pipeline 与单测），协议保持非隔离不动。
+- **AX 焦点窗口标题**：`AXUIElementCreateApplication(pid)` → `kAXFocusedWindowAttribute` → `kAXTitleAttribute`；进函数先查 `AXIsProcessTrusted()`，无权限直接 nil（§4.2.5 降级为"仅 App 名"，与无焦点窗口同一路径，不区分提示文案——用户引导统一走权限自检页）。
+- **松手校验语义（§3.4.3）**：`handleHotkeyUp` **必须**重新快照（不能只回读 keyDown 快照）：录音中 Cmd+Tab 切前台是真实场景；bundleID 或 pid 不同 → NOTICE 打点并以松手时前台为准（注入目标 + 润色上下文）。`targetSnapshot` 随之更新为松手快照。
+- **两条无标题路径要分开打**：无辅助功能权限（`axTrustedProvider()==false` →「无辅助功能权限，仅记录 App 名」）与已授权但取不到焦点窗口（→「已授权 AX 但取不到焦点窗口标题」）——排障时两种根因完全不同（前者去开权限，后者是窗口系统状态）；快照日志均带 AppCategory 分类（校验分类表正确性）。
+- **「无上下文」模式**：前台取不到时 TargetSnapshot 为 pid 0 + 空标识；`RefinePrompt.userMessage` 对空 appName 省略整个【上下文】块（§4.2.5：润色仅做句式整理），避免向 LLM 发送"当前 App：（）"的畸形上下文。
+- **AppCategoryMapper 纯表定位**：分类表放 Context 模块但由 Pipeline 直接调用（纯函数无需 mock），不进 `ContextCollecting` 协议（协议不膨胀）；AI CLI 无独立 bundleID，归宿主终端分类（注入适配 Phase 8 复用此表）。
+
 ### Prompt 润色（Phase 6，FR-D1/FR-D4）
 
-- **3s 预算分配**：§4.2.4 总预算 3s 拆为 首次尝试 1.2s + 退避 0.3s + 重试 1.5s——重试恰好一次、总时长不越线（`withThrowingTaskGroup` 竞速：请求任务 vs `PipelineClock.sleep(预算)` 哨兵，哨兵赢则 `cancelAll`；MockClock 下单测不真睡）。失败/超时/未配 Key 一律 `(raw, false)` 回退，不阻断主链路。
+- **预算分配（v0.9 放宽）**：§4.2.4 总预算由 3s 放宽为 4.3s——首次尝试 2.0s + 退避 0.3s + 重试 2.0s（真机：Moonshot 首试 1219ms 超 1.2s、重试 1562ms 超 1.5s 连退；"润色成功但略慢"优于"快但未润色"）。机制不变：`withThrowingTaskGroup` 竞速（请求 vs PipelineClock 哨兵），MockClock 下单测不真睡；常量集中在 `PromptRefiner.firstAttemptTimeout/retryBackoff/retryAttemptTimeout`。
+- **LLM 连接预热（2026-08-19）**：冷连接 TLS 握手会吃掉首试预算——录音开始（`handleHotkeyDown` 成功起录后，含菜单降级路径）以 fire-and-forget 发 `GET {baseURL}/models`（2s 超时、Bearer 鉴权、不打响应体、失败静默 DEBUG）。**关键是与 Refiner 共享同一 URLSession 实例**（delegate 的 `llmSession`，独立 keep-alive 连接池），否则连接池不共享、预热无效；在飞防重复发，每次新录音可再预热（连接可能已被服务端关闭）。预热不进 Pipeline 状态机（`prewarmLLM` 可空钩子注入）。
 - **隐私门为什么挡在"首次实际发送前"**：`llm.refineEnabled` 默认 true，用户可能不进设置页就直接使用——在 App 启动或开关打开时弹窗都为时过早且无感，唯一可靠拦截点是"第一次真正要发送转写文本"。实现：`llm.privacyAcknowledged` 键 + PromptRefiner 注入 `@Sendable () async -> Bool` 门（AppDelegate 弹 NSAlert，「继续」记键、「本次跳过」返回 false 下次再问）；未配 Key 或开关关闭时门根本不被调用。LSUIElement 弹窗先 `NSApp.activate()`（同设置窗口置顶坑）。
 - **LLM 客户端**：`ChatCompleting: Sendable` 协议隔离（单测 mock）；`OpenAIChatClient.makeRequest/parseContent` 静态纯函数可单测；错误只分 missingAPIKey / httpStatus(code) / invalidResponse——**日志只落错误类别与耗时，不落 Key 与转写/润色文本本体**（隐私红线）；请求体 max_tokens=500（§4.2.4 成本约束），**不携带 temperature**——Kimi Code 端点仅允许 temperature=1（其他值 400，2026-08-19 踩坑），省略时各服务商走默认（Moonshot 0.3），兼容性最好；httpStatus 错误携带服务端响应体摘录（≤500 字符；错误体为 {"error":{...}} 元信息，不含请求文本本体，是 4xx/5xx 排障关键）。
 - **UTF-8 安全截断**：选区 ≤2KB 按字节截断后回退到最近完整字符边界（`String(bytes:encoding:)` 返回 nil 即断点，逐字节回退），不产 U+FFFD 替换符；加省略号标识截断。
