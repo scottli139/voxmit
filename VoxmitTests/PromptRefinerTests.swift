@@ -254,6 +254,9 @@ struct PromptRefinerTests {
         #expect(request.messages.count == 2)
         #expect(request.messages[0].role == "system")
         #expect(request.messages[0].content.contains("Prompt 工程师"))
+        // v0.11 防脑补约束（真机反馈：上下文被当成操作对象脑补出「创建笔记」等动作）
+        #expect(request.messages[0].content.contains("不得当作操作对象"))
+        #expect(request.messages[0].content.contains("禁止脑补"))
         #expect(request.messages[1].role == "user")
     }
 

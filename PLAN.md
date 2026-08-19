@@ -155,6 +155,7 @@
 - 2026-08-19：松手校验（§3.4.3）——handleHotkeyUp 必二次快照，bundleID/pid 变化打 NOTICE 并以松手前台为准（注入目标与润色上下文同步）；VoiceContext.appCategory 由 AppCategoryMapper 真实分类（替换 .other 硬编码）；「无上下文」时 RefinePrompt 省略上下文块（润色仅句式整理）。pbxproj 未动（文件系统同步分组自动纳入 Modules/Context）。
 - 2026-08-19：三项改动——① LLM 连接预热：冷连接 TLS 握手吃润色预算（真机首试 1219ms 超 1.2s、重试 1562ms 超 1.5s 连退），新增 `Modules/Refiner/LLMPrewarmer.swift`（`GET {baseURL}/models` 2s 超时、Bearer 鉴权不打响应体、失败静默 DEBUG、在飞防重），关键为 delegate 的 `llmSession` 同时注入 Refiner 与预热器（共享 keep-alive 连接池否则预热无效）；触发点为 `handleHotkeyDown` 起录成功（`prewarmLLM` 可空钩子，菜单路径同覆盖）。② 润色预算放宽（需求 v0.9）：3s（1.2+0.3+1.5）→ 4.3s（2.0+0.3+2.0），原因"响应波动+冷连接致 3s 下回退率过高，润色成功但略慢优于快但未润色"；常量集中在 `PromptRefiner` 三个 timeout。③ 上下文日志补强：无标题两条路径分开（「无辅助功能权限，仅记录 App 名」vs「已授权 AX 但取不到焦点窗口标题」，collector 注入 axTrustedProvider），快照日志补 AppCategory 分类。单测 +9（226 总），build/test 全绿。
 - 2026-08-19：预算二次放宽（需求 v0.10，实测数据驱动）——curl api.moonshot.cn 实测 TLS 握手 2.3~2.7s、冷连接 chat 3.8~5.0s、热连接 1.2~2.9s；发现初版预热 2s 超时比握手还短、从未成功（日志实证每次超时）——教训"预热超时必须大于握手时间"：预热超时 2s→8s；润色预算 4.3s→7.3s（3.5+0.3+3.5：冷连接首试 3.5s 内握手入池、重试热连接 2.9s<3.5s 兜底）。需求文档 v0.9→v0.10（§4.2.4/§1.3 同步、变更记录含实测依据），ARCHITECTURE/implementation-notes/USER_GUIDE 同步。单测 +2（228 总：预热超时常量断言 + 预算常量断言），build/test 全绿。
+- 2026-08-19：润色 System Prompt v0.11 防脑补（需求 §9.1 模板 5 条→6 条）——真机反馈：Notes（.other 类）口述唐诗被脑补成"打开窗口、创建新笔记"操作指令（上下文被当作操作对象）。新模板加三条硬约束：上下文仅供指代消解、禁止脑补未口述操作、非工程口述只做通顺化。教训：LLM 行为只能靠模板约束（模板断言进单测防回归），效果靠真机验收。
 
 ### Phase 8: 结果注入 📋 (FR-F1, FR-F4, FR-F5)
 
