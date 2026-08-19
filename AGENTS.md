@@ -7,7 +7,7 @@
 **Phase 0–8 已完成（2026-08-19）：工程脚手架、权限自检、热键、音频采集、录音 HUD、本地转写、LLM 润色、上下文快照、结果注入均已实现并验证；当前处于 Phase 9 联调与 MVP 验收。**
 
 - 需求文档 `语音编程工具-需求分析与方案说明.md`（v0.14，2026-08-19；§8 开放问题已全部决策，定名 Voxmit）是需求与方案的唯一事实来源。
-- 仓库：https://github.com/scottli139/voxmit（Private，2026-08-17 创建）。
+- 仓库：https://github.com/scottli139/voxmit（Public，2026-08-17 创建，2026-08-19 转公开）。
 - 构建与测试命令（CI 尚未建立，本地执行）：
   - `xcodebuild build -scheme Voxmit -destination 'platform=macOS'`
   - `xcodebuild test -scheme Voxmit -destination 'platform=macOS'`
@@ -21,14 +21,17 @@
 | `语音编程工具-需求分析与方案说明.md` | 需求与方案唯一事实来源（FR 编号、优先级、里程碑、接口契约 §9.1） |
 | `docs/ARCHITECTURE.md` | 架构设计文档：设计意图 + as-built 实况（分层、状态机、模块边界、并发模型） |
 | `PLAN.md` | 开发计划与任务进度（唯一的任务看板，不在本文件重复维护） |
-| `CONTRIBUTING.md` | 贡献指南：环境搭建、提交前检查链、代码质量要求、Commit/PR 规范 |
+| `README.md` + `README.zh-CN.md` | 项目入口与用户面向说明（双语成对，面向全球开发者） |
+| `CONTRIBUTING.md` + `CONTRIBUTING.zh-CN.md` | 贡献指南：环境搭建、提交前检查链、代码质量要求、Commit/PR 规范（双语成对） |
 | `docs/TESTING.md` | 测试要求：质量门禁、单测规范、真机手动测试矩阵、性能验收方法、CI 规划 |
-| `docs/implementation-notes.md` | 实现细节知识库：踩坑、架构要点、发布流程（实现开始后填充） |
+| `docs/implementation-notes.md` | 实现细节知识库：踩坑、架构要点、发布流程 |
 | `docs/USER_GUIDE.md` | 用户使用说明（面向最终用户；用户可见行为变更时随提交同步更新） |
+| `docs/index.html` + `docs/index.zh-CN.html` | GitHub Pages 官网落地页（双语成对；`docs/` 即 Pages 站点源） |
+| `LICENSE` · `CODE_OF_CONDUCT.md` · `.github/` | MIT 许可证、行为准则、issue/PR 模板与 Pages CI |
 
 ## 2. 项目概述
 
-**Voxmit**——一款 macOS 菜单栏常驻的语音驱动 AI 编程工具。（2026-08-17 定名；仓库 https://github.com/scottli139/voxmit，Private）
+**Voxmit**——一款 macOS 菜单栏常驻的语音驱动 AI 编程工具。（2026-08-17 定名；仓库 https://github.com/scottli139/voxmit，Public）
 
 核心链路：按住全局热键（默认右 Option）说话 → 本地语音转写 → LLM 润色为高质量工程 Prompt → 自动注入当前 AI 开发工具（Kimi Code / Claude Code / Cursor 等）的输入框。
 
@@ -76,7 +79,8 @@
 - **最小改动**：按优先级实现，不要提前实现 P1/P2 功能。
 - **任务看板**：任务进度只更新 `PLAN.md`，不在本文件维护任务清单。
 - **实现细节沉淀**：踩坑与架构要点写入 `docs/implementation-notes.md`；本文件只保留精简指南。
-- **使用说明同步**：用户可见行为（界面、设置项、操作方式、权限与降级行为）变更时，同一次提交内顺手更新 `docs/USER_GUIDE.md`。
+- **使用说明同步**：用户可见行为（界面、设置项、操作方式、权限与降级行为）变更时，同一次提交内顺手更新 `docs/USER_GUIDE.md` 与 `README` 双语。
+- **双语文档同步**（2026-08-19 起）：`README.md` ↔ `README.zh-CN.md`、`CONTRIBUTING.md` ↔ `CONTRIBUTING.zh-CN.md`、`docs/index.html` ↔ `docs/index.zh-CN.html` 必须成对更新；开源分发以英文为准、中文为工程语言。
 - **文档图示**（2026-08-18 起）：项目文档中**禁止 ASCII 图**（框线/箭头字符画，中英文混排对不齐）；图示一律用 mermaid（```mermaid 代码块，GitHub 原生渲染），确有需要时生成真实图片存 `docs/images/` 引用。目录树等纯文本列表不受此限，但不做列对齐。mermaid 写法注意：flowchart 边标签（`-->|...|`）含半角括号等语法字符时必须用双引号包裹（`-->|"..."|`，全角括号不受影响），标签中含 `<`/`>` 开头文本需改写防 HTML 误判。
 - **提交前检查链与代码质量要求**：见 `CONTRIBUTING.md`（Phase 0 工程建立后生效）。AI 协助的提交须在 commit message 末尾加 `Model: <模型名>` trailer。
 - **约定同步**：修改本文件提及的任何约定（文档体系、工作流、检查链）时，同步更新本文件。
@@ -103,5 +107,5 @@
 1. LLM 润色：默认 Kimi（Moonshot）OpenAI 兼容端点，用户自备 Key，MVP 不内置额度；
 2. 模型下载：首次启动引导下载 WhisperKit small（约 500 MB），Speech 框架兜底，Intel 引导云端 ASR；
 3. 历史记录：明文 SQLite + 30 天/500 条滚动清理 + 一键清空；加密列为 P2；
-4. 商业形态：暂缓定形，代码按可开源组织；V2 启动前最终拍板；
+4. 商业形态：已定 MIT 开源（2026-08-19 定形，替代「暂缓定形」）；
 5. 命名：已定名 **Voxmit**（2026-08-17，GitHub 查重 0 同名；仓库 scottli139/voxmit）；App Store / 商标查重在发布前补做。

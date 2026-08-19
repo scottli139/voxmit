@@ -1,71 +1,70 @@
-# 参与贡献 Voxmit
+# Contributing to Voxmit
 
-感谢你有兴趣参与贡献！Voxmit 是一款 macOS 菜单栏常驻的语音驱动 AI 编程工具（Swift 6 + SwiftUI/AppKit）。欢迎各种形式的贡献——bug 报告、新功能、文档、测试。
+**English | [简体中文](CONTRIBUTING.zh-CN.md)**
 
-> 🤖 **欢迎使用 AI 辅助贡献。** 仓库根目录的 `AGENTS.md` 是为 AI 助手准备的上下文文件；任务看板在 `PLAN.md`；需求唯一事实来源是 `语音编程工具-需求分析与方案说明.md`。
+Thanks for your interest in contributing! Voxmit is a macOS menu-bar voice-driven AI coding tool (Swift 6 + SwiftUI/AppKit). Contributions of all kinds are welcome — bug reports, features, docs, tests, translations.
 
-## 环境搭建
+> 🤖 **AI-assisted contributions are welcome.** This project is built with AI assistance. The root `AGENTS.md` is a ready-made context file for your coding assistant; the task board is `PLAN.md`; the single source of truth for requirements is `语音编程工具-需求分析与方案说明.md`.
 
-前置条件：macOS 14+、Xcode 16+（Swift 6 工具链）。
+## Environment Setup
+
+Prerequisites: macOS 14+, Xcode 16+ (Swift 6 toolchain).
 
 ```bash
 git clone https://github.com/scottli139/voxmit.git
 cd voxmit
-open Voxmit.xcodeproj   # SPM 依赖（WhisperKit 等）由 Xcode 自动解析
+open Voxmit.xcodeproj   # SPM dependencies (WhisperKit, ...) resolve automatically
 ```
 
-真机调试需为本机开发构建逐项授予三项系统权限（麦克风 / 输入监控 / 辅助功能），权限矩阵与降级行为见需求文档 §4.4。
+Real-device debugging requires granting three system permissions to the dev build (microphone / input monitoring / accessibility). See the permission matrix in the requirement doc §4.4.
 
-> 当前工程尚未建立，贡献以文档评审为主：需求文档、`PLAN.md`、`docs/`。本节命令在 Phase 0 完成后生效。
+## Pre-commit Checks
 
-## 提交前检查
-
-以下检查链都要过——CI 会强制执行：
+Run both — CI enforces them:
 
 ```bash
-xcodebuild build -scheme Voxmit -destination 'platform=macOS'   # 编译
-xcodebuild test -scheme Voxmit -destination 'platform=macOS'    # 单元测试
-swiftlint                                                            # 代码风格（Phase 0 接入）
-swiftformat --lint .                                                 # 格式（Phase 0 接入）
+xcodebuild build -scheme Voxmit -destination 'platform=macOS'
+xcodebuild test -scheme Voxmit -destination 'platform=macOS'
 ```
 
-提示：
+Notes:
 
-- 涉及系统权限的功能（热键 / 注入 / 上下文），单测一律走协议 mock，不得要求运行环境持有真实权限；
-- 主链路（热键 → 录音 → 转写 → 润色 → 注入）相关改动，需在 PR 描述中勾选 `docs/TESTING.md` 手动测试矩阵的已执行项。
+- Features touching system permissions (hotkey / injection / context) must be covered by protocol mocks — tests must not require real permissions.
+- Main-chain changes (hotkey → recording → transcription → refinement → injection) must record which manual-test matrix items from `docs/TESTING.md` were executed.
+- SwiftLint / SwiftFormat configuration is planned but not yet wired; style follows the existing Swift conventions for now.
 
-## Commit 规范
+## Commit Conventions
 
-约定式前缀 + 简要描述（中英文均可，与现有提交记录保持一致）：
+Conventional prefix + short description (Chinese or English, matching existing history):
 
 ```
-feat: 右 Option 按住说话与防误触判定
-fix: 修复剪贴板恢复覆盖用户新复制内容
-docs: 补充权限矩阵说明
+feat: Right Option push-to-talk with mistouch guard
+fix: clipboard restore no longer overwrites newer user copy
+docs: document permission matrix
 test / chore / style / refactor: ...
 ```
 
-- AI 协助的提交，commit message 末尾加模型 trailer（格式 `Model: <模型名>`，以当次实际使用的模型为准）；纯人工提交不加；
-- 版本号提升与发布仅由维护者操作（`chore: bump version` + tag）。
+- AI-assisted commits must end with a model trailer (`Model: <model name>`, the model actually used); purely manual commits omit it.
+- Version bumps and releases are maintainer-only (`chore: bump version` + tag).
 
-## Pull Request 流程
+## Pull Request Flow
 
-1. 从 `main` 切分支，保持 diff 聚焦——一个 PR 只做一件事；
-2. 需求相关改动在 PR 描述中标注对应 FR 编号（需求文档 §3.1）；
-3. 确保 CI 全绿（编译 + 单测 + lint）；主链路改动附手动测试执行记录；
-4. 小 PR 评审快；大型改动请先开 issue 讨论，排期以 `PLAN.md` 为准。
+1. Branch from `main`, keep the diff focused — one PR, one thing.
+2. Tag requirement-related changes with the FR number (requirement doc §3.1).
+3. Make sure CI is green (build + tests). Main-chain changes must include manual-test records.
+4. Small PRs get reviewed faster; large changes should start as an issue. Scheduling follows `PLAN.md`.
 
-## 代码质量要求
+## Code Quality Requirements
 
-- **协议隔离可测试**：各模块按需求文档 §9.1 的协议解耦；核心逻辑（状态机、润色、注入决策）必须能在无系统权限的环境中被单测覆盖；
-- **不提前实现**：严格按 FR 优先级动工，MVP 阶段不实现 P1/P2 功能；
-- **密钥零容忍**：LLM API Key 只存 Keychain；代码、配置、日志中禁止出现，评审时一票否决；
-- **隐私红线**：录音数据仅存内存不落盘；任何外发网络请求（润色 / 云端 ASR）必须有用户告知与开关；
-- **语言约定**：代码标识符英文、注释跟随 Swift 社区惯例；文档、commit 描述使用简体中文；
-- **文档同步**：用户可见行为变更同步需求文档，并同提交更新 `docs/USER_GUIDE.md`（使用说明）；任务进度只更新 `PLAN.md`；实现踩坑记入 `docs/implementation-notes.md`；修改以上任何约定时同步 `AGENTS.md`。文档中的图示禁用 ASCII 字符画，统一用 mermaid 代码块（约定详见 `AGENTS.md` §5）。
+- **Protocol isolation**: modules are decoupled via the §9.1 protocols; core logic (state machine, refinement, injection decisions) must be unit-testable without system permissions.
+- **No premature scope**: work strictly by FR priority (P0 → P1 → P2); do not implement P1/P2 during MVP.
+- **Zero-tolerance on keys**: the LLM API key lives only in Keychain; never in code, config, or logs.
+- **Privacy red line**: audio stays in memory and is never written to disk; any network egress (refinement / cloud ASR) requires user disclosure and an off switch.
+- **Language**: code identifiers in English, comments following Swift community style; docs and commit messages in Chinese (project convention); user-facing docs bilingual where applicable.
+- **Doc sync**: user-visible changes update `docs/USER_GUIDE.md`; task progress goes only in `PLAN.md`; pitfalls go in `docs/implementation-notes.md`; bilingual files (`README` ↔ `README.zh-CN`, `docs/index` ↔ `docs/index.zh-CN`, `CONTRIBUTING` ↔ `CONTRIBUTING.zh-CN`) must be updated together; changing any of these conventions updates `AGENTS.md`. Diagrams use mermaid, never ASCII art.
 
-## 从哪里开始
+## Where to Start
 
-- `PLAN.md` 的「下一步行动」——当前波次任务与依赖约束；
-- 需求文档 §8 的开放问题已决策（2026-08-17）；未来出现的新开放问题，需要维护者决策的事项不要擅自拍板；
-- 有疑问？开一个带 `question` 标签的 issue。
+- `PLAN.md` "下一步行动" — current wave and dependencies.
+- Open questions in the requirement doc §8 are already decided (2026-08-17); do not unilaterally resolve new open questions.
+- Questions? Open an issue with the `question` label.

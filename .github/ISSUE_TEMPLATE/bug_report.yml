@@ -1,0 +1,54 @@
+name: Bug Report / 缺陷报告
+description: Report a bug in Voxmit (Chinese or English both fine / 中英文均可)
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened? / 发生了什么
+      description: A clear description of the bug. / 清晰描述这个 bug。
+      placeholder: When I ..., the app ...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: |
+        1. Open ...
+        2. Hold the hotkey and speak ...
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 期望行为
+    validations:
+      required: false
+  - type: dropdown
+    id: macos
+    attributes:
+      label: macOS version / 系统版本
+      options:
+        - macOS 26
+        - macOS 15
+        - macOS 14
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Voxmit version / 版本号
+      description: Shown in Settings or the release you installed / 设置或安装版本，如 0.1.0
+      placeholder: "0.1.0"
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else / 其他信息
+      description: Screenshots, logs, or target app. Export diagnostics from Settings → Diagnostics; logs live in ~/Library/Application Support/Voxmit/Logs/. / 截图、日志或目标 App。可在设置 → 诊断中导出诊断日志（日志位于 ~/Library/Application Support/Voxmit/Logs/）。
+    validations:
+      required: false

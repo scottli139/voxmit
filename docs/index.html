@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voxmit - Voice-First Input for AI Coding on macOS</title>
+  <meta name="description" content="Voxmit is a free, open-source macOS menu-bar tool that turns your voice into engineering prompts. Hold a hotkey, speak, and the result is transcribed locally, refined by an LLM, and injected into Kimi Code, Claude Code, Cursor and more.">
+  <meta name="keywords" content="voice coding, voice input, AI coding, macos voice dictation, whisper, whisperkit, kimi code, claude code, cursor, prompt engineering, speech to text">
+  <link rel="canonical" href="https://scottli139.github.io/voxmit/">
+  <link rel="alternate" hreflang="en" href="https://scottli139.github.io/voxmit/">
+  <link rel="alternate" hreflang="zh-CN" href="https://scottli139.github.io/voxmit/index.zh-CN.html">
+  <link rel="alternate" hreflang="x-default" href="https://scottli139.github.io/voxmit/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Voxmit">
+  <meta property="og:title" content="Voxmit - Voice-First Input for AI Coding on macOS">
+  <meta property="og:description" content="Free, open-source macOS menu-bar tool that turns voice into engineering prompts — local transcription, LLM refinement, one-tap injection into Kimi Code, Claude Code, Cursor and more.">
+  <meta property="og:url" content="https://scottli139.github.io/voxmit/">
+  <meta property="og:image" content="https://scottli139.github.io/voxmit/images/logo.png">
+  <meta property="og:image:width" content="1024">
+  <meta property="og:image:height" content="1024">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:locale:alternate" content="zh_CN">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Voxmit - Voice-First Input for AI Coding on macOS">
+  <meta name="twitter:description" content="Free, open-source macOS menu-bar tool that turns voice into engineering prompts — local transcription, LLM refinement, one-tap injection.">
+  <meta name="twitter:image" content="https://scottli139.github.io/voxmit/images/logo.png">
+  <link rel="stylesheet" href="css/style.css?v=20260819">
+  <link rel="icon" type="image/png" href="images/logo.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Voxmit",
+    "url": "https://scottli139.github.io/voxmit/",
+    "downloadUrl": "https://github.com/scottli139/voxmit",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "macOS",
+    "softwareVersion": "0.1.0",
+    "license": "https://opensource.org/licenses/MIT",
+    "isAccessibleForFree": true,
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "description": "Free, open-source macOS menu-bar tool that turns voice into engineering prompts — local transcription, LLM refinement, one-tap injection into AI dev tools.",
+    "featureList": "Push-to-talk global hotkey, local WhisperKit transcription, LLM prompt refinement, context-aware injection, clipboard + Cmd+V injection, non-activating HUD, permission self-check, diagnostics",
+    "author": {
+      "@type": "Person",
+      "name": "Scott Li",
+      "url": "https://github.com/scottli139"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header class="header">
+    <div class="container">
+      <div class="logo">
+        <img src="images/logo.png" alt="Voxmit Logo">
+        <h1>Voxmit</h1>
+      </div>
+      <nav class="nav">
+        <a href="#how">How It Works</a>
+        <a href="#features">Features</a>
+        <a href="#ai">AI Built</a>
+        <a href="https://github.com/scottli139/voxmit" target="_blank">GitHub</a>
+        <span class="lang-switch">
+          <a href="index.html" class="active">EN</a> | <a href="index.zh-CN.html">中</a>
+        </span>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="container">
+      <div class="hero-content">
+        <h2>Voice-First Input for AI Coding</h2>
+        <p class="hero-desc">
+          Hold a hotkey, speak, and your words become an engineering prompt —
+          transcribed locally, refined by an LLM, injected into your AI dev tool.
+          Built entirely with AI.
+        </p>
+        <p class="hero-mkdocs">
+          <span class="mkdocs-badge">🎙️ Push-to-Talk</span>
+          Local transcription · LLM refinement · One-tap injection
+        </p>
+        <div class="badges">
+          <span class="badge">Swift 6</span>
+          <span class="badge">macOS 14+</span>
+          <span class="badge">WhisperKit</span>
+          <span class="badge badge-ai">100% AI Built</span>
+        </div>
+        <div class="hero-actions">
+          <a href="https://github.com/scottli139/voxmit" class="btn btn-primary" target="_blank">
+            View on GitHub
+          </a>
+          <a href="#how" class="btn btn-secondary">
+            How It Works
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="features" id="how">
+    <div class="container">
+      <h2>How It Works</h2>
+      <p style="text-align:center; color: var(--color-text-secondary); max-width: 720px; margin: 0 auto 48px;">
+        Screenshots and a demo video are coming soon. The chain below is already working end-to-end.
+      </p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🎙️</div>
+          <h3>1. Hold &amp; Speak</h3>
+          <p>Hold the global hotkey (default Right Option) and speak naturally. A 200 ms hold-to-confirm guard prevents mistouches.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔒</div>
+          <h3>2. Transcribe Locally</h3>
+          <p>Release to transcribe on-device with WhisperKit small — audio stays in memory and is never written to disk.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">✨</div>
+          <h3>3. Refine</h3>
+          <p>Your own LLM key turns the transcript into a clean engineering prompt, with hard anti-hallucination constraints.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📋</div>
+          <h3>4. Inject</h3>
+          <p>The result lands at the cursor of the app you were using — clipboard + Cmd+V with restore and race protection.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="ai-section" id="ai">
+    <div class="container">
+      <h2>🤖 100% AI Built</h2>
+      <p class="ai-desc">
+        This project was entirely built with AI coding assistants.
+        Every line of code was generated, reviewed, and refined through AI collaboration.
+      </p>
+      <div class="ai-tools">
+        <div class="ai-tool">
+          <h3>Kimi Code CLI</h3>
+          <p>Kimi K3</p>
+        </div>
+        <div class="ai-tool">
+          <h3><a href="https://platform.deepseek.com/" target="_blank" style="color: inherit; text-decoration: none;">DeepSeek</a></h3>
+          <p>V4 Pro</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="features" id="features">
+    <div class="container">
+      <h2>Features</h2>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🎙️</div>
+          <h3>Push-to-Talk Hotkey</h3>
+          <p>Default Right Option with 200 ms confirmation, 300 ms mistouch cancel and Esc to discard. Presets: Right Option / Right Command / Right Shift / Fn.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔒</div>
+          <h3>Local, Private Transcription</h3>
+          <p>WhisperKit small runs fully on-device with Chinese/English mixed support; Speech framework fallback until the model is ready.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">✨</div>
+          <h3>LLM Prompt Refinement</h3>
+          <p>Removes filler words, normalizes phrasing, resolves anaphora from context, and falls back to raw text on timeout — bring your own key.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🎯</div>
+          <h3>Context-Aware Injection</h3>
+          <p>Snapshots the frontmost app and window title on press, re-checks on release, and classifies terminal / editor / browser / other.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📋</div>
+          <h3>Clipboard + Cmd+V</h3>
+          <p>Clipboard snapshot/restore with change-count race protection; optional auto-send (Return); newline folding for CLI targets.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🪟</div>
+          <h3>Non-Activating HUD</h3>
+          <p>Waveform, stage status and success/failure feedback — visible in full screen and across Spaces without stealing focus.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🛡️</div>
+          <h3>Permission Self-Check</h3>
+          <p>Guided onboarding with deep links into System Settings and graceful degradation for mic / input monitoring / accessibility.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🩺</div>
+          <h3>Diagnostics</h3>
+          <p>Categorized os_log plus on-disk logs with one-click export from Settings.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tech-stack">
+    <div class="container">
+      <h2>Tech Stack</h2>
+      <div class="tech-list">
+        <span class="tech-item">Swift 6</span>
+        <span class="tech-item">SwiftUI</span>
+        <span class="tech-item">AppKit</span>
+        <span class="tech-item">AVAudioEngine</span>
+        <span class="tech-item">CGEventTap</span>
+        <span class="tech-item">WhisperKit</span>
+        <span class="tech-item">Speech</span>
+        <span class="tech-item">Keychain</span>
+        <span class="tech-item">Swift Testing</span>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container">
+      <p>
+        &copy; 2026 Voxmit. Licensed under
+        <a href="https://github.com/scottli139/voxmit/blob/main/LICENSE" target="_blank">MIT License</a>.
+      </p>
+      <p class="footer-links">
+        <a href="https://github.com/scottli139/voxmit" target="_blank">GitHub</a>
+        &bull;
+        <a href="https://github.com/scottli139/voxmit/issues" target="_blank">Issues</a>
+        &bull;
+        <a href="https://github.com/scottli139/voxmit/blob/main/CONTRIBUTING.md" target="_blank">Contribute</a>
+      </p>
+      <p class="visitor-count">
+        Total visits <span id="vercount_value_site_pv">-</span>
+        &bull;
+        Unique visitors <span id="vercount_value_site_uv">-</span>
+      </p>
+    </div>
+  </footer>
+  <script defer src="https://events.vercount.one/js"></script>
+</body>
+</html>

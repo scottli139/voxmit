@@ -1,0 +1,27 @@
+name: Feature Request / 功能建议
+description: Suggest an idea for Voxmit (Chinese or English both fine / 中英文均可)
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does it solve? / 解决什么问题
+      description: Describe the pain point or use case. / 描述痛点或使用场景。
+      placeholder: When coding with ..., I need ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / 期望的方案
+      placeholder: It would be great if ...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 考虑过的替代方案
+      description: How do Wispr Flow, Superwhisper, VoiceInk or AI IDE voice plugins handle this? / Wispr Flow、Superwhisper、VoiceInk 或 AI IDE 语音插件是如何做的？
+    validations:
+      required: false

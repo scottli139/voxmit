@@ -5,7 +5,7 @@
 ## 项目信息
 
 - **项目名称**: Voxmit（2026-08-17 定名，见需求文档 §8-5）
-- **仓库**: https://github.com/scottli139/voxmit（Private）
+- **仓库**: https://github.com/scottli139/voxmit（Public，2026-08-19 转公开）
 - **技术栈**: Swift 6 + SwiftUI/AppKit · WhisperKit · OpenAI 兼容 LLM 接口
 - **目标平台**: macOS 14 Sonoma 及以上，优先 Apple Silicon
 - **需求唯一事实来源**: `语音编程工具-需求分析与方案说明.md`（FR 编号、优先级、验收标准以它为准；本文件不复制需求内容，只跟踪任务与进度）
@@ -207,7 +207,7 @@
 
 **工程化（随 Phase 0 同步落地）：** SwiftLint / SwiftFormat 配置、GitHub Actions CI（编译 + 单测）、`.gitignore`（Xcode / 模型文件 / 签名材料）。
 
-**暂缓项（等排期）：** GRDB 历史记录与 Sparkle（V1.1）、LICENSE / README / 官网（§8-4 已决策：暂缓定形，代码按可开源组织）、历史记录加密（§8-3 已决策：列为 P2）。
+**暂缓项（等排期）：** GRDB 历史记录与 Sparkle（V1.1）、历史记录加密（§8-3 已决策：列为 P2）。LICENSE / README / 官网 / 贡献材料已于 2026-08-19 落地（MIT，双语，与 vividmark 对齐）；repo 已于 2026-08-19 转 Public。
 
 ---
 

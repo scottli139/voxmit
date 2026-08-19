@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voxmit - macOS 语音优先 AI 编程输入</title>
+  <meta name="description" content="Voxmit 是一款免费开源的 macOS 菜单栏工具，把语音变成工程化 Prompt。按住热键说话，本地转写、LLM 润色，一键注入 Kimi Code、Claude Code、Cursor 等 AI 开发工具。">
+  <meta name="keywords" content="语音编程, 语音输入, AI编程, macOS语音转写, whisper, whisperkit, kimi code, claude code, cursor, prompt工程, 语音转文字">
+  <link rel="canonical" href="https://scottli139.github.io/voxmit/index.zh-CN.html">
+  <link rel="alternate" hreflang="en" href="https://scottli139.github.io/voxmit/">
+  <link rel="alternate" hreflang="zh-CN" href="https://scottli139.github.io/voxmit/index.zh-CN.html">
+  <link rel="alternate" hreflang="x-default" href="https://scottli139.github.io/voxmit/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Voxmit">
+  <meta property="og:title" content="Voxmit - macOS 语音优先 AI 编程输入">
+  <meta property="og:description" content="免费开源的 macOS 菜单栏工具，把语音变成工程化 Prompt——本地转写、LLM 润色，一键注入 Kimi Code、Claude Code、Cursor 等。">
+  <meta property="og:url" content="https://scottli139.github.io/voxmit/index.zh-CN.html">
+  <meta property="og:image" content="https://scottli139.github.io/voxmit/images/logo.png">
+  <meta property="og:image:width" content="1024">
+  <meta property="og:image:height" content="1024">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Voxmit - macOS 语音优先 AI 编程输入">
+  <meta name="twitter:description" content="免费开源的 macOS 菜单栏工具，把语音变成工程化 Prompt——本地转写、LLM 润色，一键注入。">
+  <meta name="twitter:image" content="https://scottli139.github.io/voxmit/images/logo.png">
+  <link rel="stylesheet" href="css/style.css?v=20260819">
+  <link rel="icon" type="image/png" href="images/logo.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Voxmit",
+    "url": "https://scottli139.github.io/voxmit/index.zh-CN.html",
+    "downloadUrl": "https://github.com/scottli139/voxmit",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "macOS",
+    "softwareVersion": "0.1.0",
+    "license": "https://opensource.org/licenses/MIT",
+    "isAccessibleForFree": true,
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" },
+    "description": "免费开源的 macOS 菜单栏工具，把语音变成工程化 Prompt——本地转写、LLM 润色，一键注入 AI 开发工具。",
+    "featureList": "按住说话全局热键、本地 WhisperKit 转写、LLM 润色、上下文感知注入、剪贴板 + Cmd+V 注入、非激活 HUD、权限自检、诊断日志",
+    "author": {
+      "@type": "Person",
+      "name": "Scott Li",
+      "url": "https://github.com/scottli139"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header class="header">
+    <div class="container">
+      <div class="logo">
+        <img src="images/logo.png" alt="Voxmit Logo">
+        <h1>Voxmit</h1>
+      </div>
+      <nav class="nav">
+        <a href="#how">工作原理</a>
+        <a href="#features">功能</a>
+        <a href="#ai">AI 构建</a>
+        <a href="https://github.com/scottli139/voxmit" target="_blank">GitHub</a>
+        <span class="lang-switch">
+          <a href="index.html">EN</a> | <a href="index.zh-CN.html" class="active">中</a>
+        </span>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="container">
+      <div class="hero-content">
+        <h2>语音优先的 AI 编程输入</h2>
+        <p class="hero-desc">
+          按住热键说话，你的语音就会变成工程化 Prompt——
+          本地转写、LLM 润色，一键注入你的 AI 开发工具。
+          完全由 AI 构建。
+        </p>
+        <p class="hero-mkdocs">
+          <span class="mkdocs-badge">🎙️ 按住说话</span>
+          本地转写 · LLM 润色 · 一键注入
+        </p>
+        <div class="badges">
+          <span class="badge">Swift 6</span>
+          <span class="badge">macOS 14+</span>
+          <span class="badge">WhisperKit</span>
+          <span class="badge badge-ai">100% AI 构建</span>
+        </div>
+        <div class="hero-actions">
+          <a href="https://github.com/scottli139/voxmit" class="btn btn-primary" target="_blank">
+            在 GitHub 上查看
+          </a>
+          <a href="#how" class="btn btn-secondary">
+            工作原理
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="features" id="how">
+    <div class="container">
+      <h2>工作原理</h2>
+      <p style="text-align:center; color: var(--color-text-secondary); max-width: 720px; margin: 0 auto 48px;">
+        截图与演示视频即将补充。下述链路已端到端跑通。
+      </p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🎙️</div>
+          <h3>1. 按住说话</h3>
+          <p>按住全局热键（默认右 Option）自然说话；200ms 确认期防误触。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔒</div>
+          <h3>2. 本地转写</h3>
+          <p>松手后由 WhisperKit small 端侧转写——音频仅存内存、不落盘。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">✨</div>
+          <h3>3. 润色</h3>
+          <p>用你自己的 LLM Key 把转写润色成干净的工程 Prompt，带防脑补硬约束。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📋</div>
+          <h3>4. 注入</h3>
+          <p>结果落到你按下热键时正在使用的 App 光标处——剪贴板 + Cmd+V，带恢复与竞争保护。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="ai-section" id="ai">
+    <div class="container">
+      <h2>🤖 100% AI 构建</h2>
+      <p class="ai-desc">
+        本项目完全由 AI 编程助手构建。
+        每一行代码都是通过 AI 协作生成、审查和优化的。
+      </p>
+      <div class="ai-tools">
+        <div class="ai-tool">
+          <h3>Kimi Code CLI</h3>
+          <p>Kimi K3</p>
+        </div>
+        <div class="ai-tool">
+          <h3><a href="https://platform.deepseek.com/" target="_blank" style="color: inherit; text-decoration: none;">DeepSeek</a></h3>
+          <p>V4 Pro</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="features" id="features">
+    <div class="container">
+      <h2>功能特性</h2>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🎙️</div>
+          <h3>按住说话全局热键</h3>
+          <p>默认右 Option，200ms 防误触确认、300ms 误触取消、Esc 放弃。预设：右 Option / 右 Command / 右 Shift / Fn。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔒</div>
+          <h3>本地隐私转写</h3>
+          <p>WhisperKit small 完全端侧运行，支持中英混合；模型就绪前由 Speech 框架兜底。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">✨</div>
+          <h3>LLM 润色</h3>
+          <p>去口水词、句式规范化、结合上下文指代消解；超时回退原文——自备 Key。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🎯</div>
+          <h3>上下文感知注入</h3>
+          <p>按下时快照前台 App 与窗口标题，松手时二次校验，分类终端 / 编辑器 / 浏览器 / 其他。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📋</div>
+          <h3>剪贴板 + Cmd+V</h3>
+          <p>剪贴板快照/恢复 + changeCount 竞争保护；可选自动回车；CLI 目标折叠换行。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🪟</div>
+          <h3>非激活 HUD</h3>
+          <p>波形、阶段状态与成败反馈——全屏、多 Space 可见，不抢焦点。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🛡️</div>
+          <h3>权限自检</h3>
+          <p>引导式 onboarding + 系统设置深链；麦克风 / 输入监控 / 辅助功能缺失时优雅降级。</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🩺</div>
+          <h3>诊断日志</h3>
+          <p>分类 os_log + 落盘日志，设置页一键导出。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tech-stack">
+    <div class="container">
+      <h2>技术栈</h2>
+      <div class="tech-list">
+        <span class="tech-item">Swift 6</span>
+        <span class="tech-item">SwiftUI</span>
+        <span class="tech-item">AppKit</span>
+        <span class="tech-item">AVAudioEngine</span>
+        <span class="tech-item">CGEventTap</span>
+        <span class="tech-item">WhisperKit</span>
+        <span class="tech-item">Speech</span>
+        <span class="tech-item">Keychain</span>
+        <span class="tech-item">Swift Testing</span>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container">
+      <p>
+        &copy; 2026 Voxmit. 使用
+        <a href="https://github.com/scottli139/voxmit/blob/main/LICENSE" target="_blank">MIT 许可证</a> 授权。
+      </p>
+      <p class="footer-links">
+        <a href="https://github.com/scottli139/voxmit" target="_blank">GitHub</a>
+        &bull;
+        <a href="https://github.com/scottli139/voxmit/issues" target="_blank">问题反馈</a>
+        &bull;
+        <a href="https://github.com/scottli139/voxmit/blob/main/CONTRIBUTING.md" target="_blank">参与贡献</a>
+      </p>
+      <p class="visitor-count">
+        总访问量 <span id="vercount_value_site_pv">-</span>
+        &bull;
+        独立访客 <span id="vercount_value_site_uv">-</span>
+      </p>
+    </div>
+  </footer>
+  <script defer src="https://events.vercount.one/js"></script>
+</body>
+</html>
