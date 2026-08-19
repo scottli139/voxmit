@@ -98,6 +98,12 @@
 - **修复**：签名 xcconfig 分层中，入库默认 `ENABLE_HARDENED_RUNTIME = YES`（ad-hoc 无影响、Release 公证分发需要），本机 `LocalSigning.xcconfig` 覆盖 `ENABLE_HARDENED_RUNTIME[config=Debug] = NO`；Release 分发构建保持开启且必须走 Apple 公证。
 - **排除过的嫌疑**：Xcode 自动注入的 Debug 测试 entitlements（`temporary-exception.mach-lookup` / `get-task-allow` 等）——清空后 hardened runtime 下依旧拒绝，与 entitlements 无关；`tccutil reset` / 删除条目重建也无效（问题不在 TCC 记录层）。
 
+### `-only-testing` 定向运行 PromptRefinerTests 稳定挂起（2026-08-19）
+
+- **现象**：`xcodebuild test -only-testing:VoxmitTests/PromptRefinerTests` 两次稳定挂起（>10 分钟无输出）：xcodebuild 0% CPU、无 swiftc/clang 编译子进程，两个 test host 进程（`.../Voxmit.app ... -NSTreatUnknownArgumentsAsOpen NO`）0.1% CPU 空转；`| tail -N` 管道因此无输出（tail 等 xcodebuild 结束才吐）。
+- **结论**：全量 `xcodebuild test` 正常（TEST SUCCEEDED，242 例，测试主体约 5.5s），定向该 suite 才挂——是定向收集路径 + 该 suite 内 async + MockClock + MainActor settle 循环在 test host 环境下的既有死锁，与具体用例改动无关。
+- **应对**：日常验证走**全量** `xcodebuild test -scheme Voxmit -destination 'platform=macOS'`；需要定向快速反馈时可先 build + 只跑纯同步 suite（如 `LLMClientTests`），避免 `PromptRefinerTests` 定向死锁。挂起的 `xcodebuild` 终止后，test host 残留进程需 `pkill -f 'DerivedData/.*/Voxmit.app/Contents/MacOS/Voxmit'` 清理（否则菜单栏残留多个 Voxmit 图标；`/Applications` 正式实例 `pkill -x Voxmit` 会一并杀掉，测试残留用上述路径精确匹配清理）。
+
 ## 架构要点
 
 ### 权限自检（Phase 1，FR-G5）
@@ -189,6 +195,8 @@
 - **消息组装**：system 用 §9.1 模板原文；user = 【上下文】（App 名+bundleID、窗口标题、选区≤2KB）+【口述内容】原文；旁路（FR-D4）在状态机层跳过润色（wasRefined=false → HUD「未润色」角标）。
 - **端点选型实测（2026-08-19）**：Kimi Code 端点（`api.kimi.com/coding/v1`，会员额度）结构性不适合润色后端——仅允许 temperature=1；强制思考且 reasoning 计入 max_tokens（500 额度被思考吃光 → 正文空串，表现为「请求成功但无内容」）；延迟 3~6.6s（highspeed 档 hello 0.96s 但真实负载仍 3s+）装不进 3s 预算。Moonshot 开放平台（`api.moonshot.cn`，按量付费）`moonshot-v1-8k`：0.6~2s、无强制思考、工程口述质量达标（指代消解/术语保留/分点），为 §8-1 默认值的实测背书；诗歌等离域输入会被强行「工程化」——v0.11 模板加"非工程口述只做通顺化、上下文仅供消歧"硬约束后修复（真机实证旧模板会把 Notes 窗口标题脑补成操作指令）。真机验收：首试 1.2s 超时（冷连接握手占大头）→ 重试成功（连接复用），端到端 3.3s——连接预热/预算再平衡列后续优化项。
 - **terminal 窗口标题省略 + 模板二次加固（v0.12，2026-08-19 真机反馈）**：口述"可以了，提交吧"在 Terminal 目标下被润色成"提高 Terminal 窗口的显示效果"——terminal 窗口标题（进程名/TMPDIR/尺寸等）噪声大、指代价值低，却诱导 LLM 把上下文当操作对象脑补。修法双管齐下：① `RefinePrompt.userMessage` 对 `appCategory == .terminal` 省略窗口标题（只保留 App 名）；② system prompt 6 条→7 条加硬约束（输出必须与口述表达同一件事、口述里没有的对象/动作/步骤一律不得出现、短促对话/流程用语按字面通顺化不扩展）。教训：光靠模板约束的边际效益递减，**从输入侧切除噪声上下文**（terminal 标题）比再加一条模板约束更有效。
+
+- **模板三次加固（v0.14，2026-08-19 真机反馈）**：口述"两个都做吧"被润色成"执行两个命令"——模型对上一轮助手提问的「两个选项」这类对话历史不可见（润色只收到当前口述 + 前台 App 上下文），于是把「两个」自行消解为「两个命令」，凭空引入"命令"。修法：system prompt 第 2 条新增「禁止把口述里的泛化动词替换成更具体动词（做/弄→执行/生成/优化）」；第 5 条从「对话/流程用语」扩展为「对话/流程/应允用语」，明确应允短句（"两个都做吧/都做吧"）绝不替换动词、绝不补全"这个/那个/两个/它"所指、绝不引入原文没有的名词、宁可原样保留也不自行补全。教训：短句脱离对话语境时，**保留指代原样比让 LLM 自行消解更安全**——消解必然引入原文没有的对象。
 
 ### 日志设施（2026-08-18，产品级）
 

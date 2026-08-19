@@ -141,6 +141,7 @@
 - 2026-08-19：真机联调排障④temperature 400——Kimi Code 端点仅允许 temperature=1，请求体改为不携带 temperature（各服务商走默认值）。
 - 2026-08-19：端点选型实测——Kimi Code 端点（kimi-for-coding 系列）结构性不适合润色后端：强制思考且计入 max_tokens（500 额度正文被吃光吐空串）、延迟 3~6.6s 超 3s 预算；Moonshot 开放平台 moonshot-v1-8k 实测 0.6~2s、无强制思考、工程口述质量达标。**真机验收通过**：转写 918ms → 首试 1.2s 超时（冷连接）→ 重试成功（润色 2364ms，11 字 → 31 字），`已润色=true`。
 - 2026-08-19：润色模板 v0.12 防脑补二次加固（真机反馈：Terminal 下口述"可以了，提交吧"被脑补成"提高 Terminal 窗口的显示效果"）——system prompt 6 条→7 条（输出必须与口述同义、禁止新增对象/动作、短对话用语不扩展）；`RefinePrompt.userMessage` 对 terminal 目标省略窗口标题（噪声大诱导脑补）。单测 +2（242 总），build/test 全绿。
+- 2026-08-19：润色模板 v0.14 防脑补三次加固（真机反馈：口述"两个都做吧"被润色成"执行两个命令"，凭空引入"命令"）——system prompt 第 2 条禁止泛化动词替换（"做/弄"→"执行/生成/优化"）；第 5 条扩展应允短句（"两个都做吧/都做吧"）不换动词、不补全指代、不引入新名词、宁可原样保留。模板断言更新。另：定向 `-only-testing:VoxmitTests/PromptRefinerTests` 本机稳定挂起（xcodebuild 无编译活动、test host 双实例 0% CPU），全量 `xcodebuild test` 正常——定向跑该 async+MockClock suite 属既有死锁，已录 implementation-notes，验证走全量。build/test 全绿（242 例）。
 
 ### Phase 7: 上下文快照 ✅ (FR-E1, FR-F5)
 
