@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Combine
 
 /// App 级协调器：持有 VoicePipeline 与 PermissionManager，
@@ -10,11 +11,22 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
     let permissionManager = PermissionManager()
     /// 音频采集（Phase 3 实装）；注入 Pipeline 替换 Phase 2 的 NoOp 占位
     let audioCapture = AudioCapture(maxDuration: VoicePipeline.maximumRecordingDuration)
+    /// 结果注入（Phase 8 P0）：剪贴板 + 模拟 Cmd+V，含 changeCount 竞争保护与仅剪贴板降级
+    private(set) lazy var clipboardInjector = ClipboardInjector(
+        pasteboard: SystemPasteboardManager(),
+        keyPoster: SystemKeyEventPoster(),
+        clock: SystemPipelineClock(),
+        axTrustedProvider: { AXIsProcessTrusted() },
+        collapseNewlinesProvider: {
+            UserDefaults.standard.bool(forKey: SettingsKeys.injectCollapseNewlines)
+        }
+    )
     /// lazy：依赖 audioCapture 与转写路由器，且避免 @MainActor 类显式 override init 的隔离问题
     private(set) lazy var pipeline = VoicePipeline(
         audio: audioCapture,
         transcription: transcriptionRouter,
         refiner: promptRefiner,
+        injector: clipboardInjector,
         contextCollector: RealContextCollector(
             axTrustedProvider: { [weak self] in
                 // snapshot 为 @MainActor 属性；collector 仅在主线程被调用（Pipeline/测试），assumeIsolated 安全

@@ -24,9 +24,7 @@ struct NoOpPromptRefiner: PromptRefining {
     }
 }
 
-/// 占位注入（Phase 8 实装完整流程）：仅写入剪贴板并返回 clipboardOnly 档——
-/// 转写文字即刻可手动 Cmd+V 使用（需求文档 §4.2.6 降级档）。
-/// 完整流程（剪贴板快照/恢复 + 模拟 Cmd+V + FR-F4 回车）在 Phase 8 替换本实现。
+/// 占位注入：Phase 8 已落地完整流程，见 ClipboardInjector；本占位仅作未接线/测试默认值。
 struct PlaceholderClipboardInjector: TextInjecting {
     func inject(text: String, into target: TargetSnapshot, autoSend: Bool) async -> InjectionOutcome {
         // NSPasteboard 约定主线程访问
