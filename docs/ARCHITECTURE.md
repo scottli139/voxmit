@@ -201,9 +201,9 @@ stateDiagram-v2
 
 - **协议（§9.1）**：`PromptRefining: Sendable`（`refine(raw:context:) async -> (text, refined)`，`refined` 标记供 HUD 角标）。
 - **实现**（`Voxmit/Modules/Refiner/`）：
-  - `PromptRefiner`：`PromptRefining` 实装——未配 Key 或 `llm.refineEnabled=false` 直出原文；隐私门（`llm.privacyAcknowledged`，首次实际发送前必挡一次，门为注入闭包）；4.3s 总预算（首次 2.0s + 退避 0.3s + 重试 2.0s，`withThrowingTaskGroup` 竞速；v0.9 由 3s 放宽）；任何异常回退 `(raw, false)`。
+  - `PromptRefiner`：`PromptRefining` 实装——未配 Key 或 `llm.refineEnabled=false` 直出原文；隐私门（`llm.privacyAcknowledged`，首次实际发送前必挡一次，门为注入闭包）；7.3s 总预算（首次 3.5s + 退避 0.3s + 重试 3.5s，`withThrowingTaskGroup` 竞速；v0.10 由 4.3s 二次放宽）；任何异常回退 `(raw, false)`。
   - `LLMClient`：`ChatCompleting: Sendable` 协议 + `OpenAIChatClient`（`POST {baseURL}/chat/completions`，Bearer 从 Keychain 读；`makeRequest/parseContent` 静态纯函数可单测）；错误分类 missingAPIKey / httpStatus / invalidResponse。
-  - `LLMPrewarmer`：LLM 连接预热（2026-08-19）——录音开始时（`VoicePipeline.handleHotkeyDown`，fire-and-forget）以共享 `llmSession` 发 `GET {baseURL}/models`（2s 超时，Bearer 鉴权，不打响应体）；与 Refiner 共用同一 URLSession 实例（独立 keep-alive 连接池），在飞防重、失败静默（DEBUG）。
+  - `LLMPrewarmer`：LLM 连接预热（2026-08-19）——录音开始时（`VoicePipeline.handleHotkeyDown`，fire-and-forget）以共享 `llmSession` 发 `GET {baseURL}/models`（8s 超时，Bearer 鉴权，不打响应体）；与 Refiner 共用同一 URLSession 实例（独立 keep-alive 连接池），在飞防重、失败静默（DEBUG）。
   - `RefinePrompt`：§9.1 system prompt 模板原文；user message = 上下文补充块（App 名+bundleID、窗口标题、选区 ≤2KB UTF-8 安全截断）+ 口述原文。
 - **接线**：`VoxmitAppDelegate` 注入替换 `NoOpPromptRefiner`；隐私门实现为 AppDelegate 弹 NSAlert（先 `NSApp.activate()`）；旁路（FR-D4）在状态机层（Phase 2 已接入 skipRefinement）。日志 category `refiner`。
 - **规划**：润色风格配置（FR-D3）、指代消解增强（FR-D2，依赖 Phase 7 上下文）均为 P1。
