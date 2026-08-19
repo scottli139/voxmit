@@ -175,7 +175,7 @@
 - **LLM 客户端**：`ChatCompleting: Sendable` 协议隔离（单测 mock）；`OpenAIChatClient.makeRequest/parseContent` 静态纯函数可单测；错误只分 missingAPIKey / httpStatus(code) / invalidResponse——**日志只落错误类别与耗时，不落 Key 与转写/润色文本本体**（隐私红线）；请求体 max_tokens=500（§4.2.4 成本约束），**不携带 temperature**——Kimi Code 端点仅允许 temperature=1（其他值 400，2026-08-19 踩坑），省略时各服务商走默认（Moonshot 0.3），兼容性最好；httpStatus 错误携带服务端响应体摘录（≤500 字符；错误体为 {"error":{...}} 元信息，不含请求文本本体，是 4xx/5xx 排障关键）。
 - **UTF-8 安全截断**：选区 ≤2KB 按字节截断后回退到最近完整字符边界（`String(bytes:encoding:)` 返回 nil 即断点，逐字节回退），不产 U+FFFD 替换符；加省略号标识截断。
 - **消息组装**：system 用 §9.1 模板原文；user = 【上下文】（App 名+bundleID、窗口标题、选区≤2KB）+【口述内容】原文；旁路（FR-D4）在状态机层跳过润色（wasRefined=false → HUD「未润色」角标）。
-- **端点选型实测（2026-08-19）**：Kimi Code 端点（`api.kimi.com/coding/v1`，会员额度）结构性不适合润色后端——仅允许 temperature=1；强制思考且 reasoning 计入 max_tokens（500 额度被思考吃光 → 正文空串，表现为「请求成功但无内容」）；延迟 3~6.6s（highspeed 档 hello 0.96s 但真实负载仍 3s+）装不进 3s 预算。Moonshot 开放平台（`api.moonshot.cn`，按量付费）`moonshot-v1-8k`：0.6~2s、无强制思考、工程口述质量达标（指代消解/术语保留/分点），为 §8-1 默认值的实测背书；诗歌等离域输入会被强行「工程化」（垃圾进垃圾出，可接受）。真机验收：首试 1.2s 超时（冷连接握手占大头）→ 重试成功（连接复用），端到端 3.3s——连接预热/预算再平衡列后续优化项。
+- **端点选型实测（2026-08-19）**：Kimi Code 端点（`api.kimi.com/coding/v1`，会员额度）结构性不适合润色后端——仅允许 temperature=1；强制思考且 reasoning 计入 max_tokens（500 额度被思考吃光 → 正文空串，表现为「请求成功但无内容」）；延迟 3~6.6s（highspeed 档 hello 0.96s 但真实负载仍 3s+）装不进 3s 预算。Moonshot 开放平台（`api.moonshot.cn`，按量付费）`moonshot-v1-8k`：0.6~2s、无强制思考、工程口述质量达标（指代消解/术语保留/分点），为 §8-1 默认值的实测背书；诗歌等离域输入会被强行「工程化」——v0.11 模板加"非工程口述只做通顺化、上下文仅供消歧"硬约束后修复（真机实证旧模板会把 Notes 窗口标题脑补成操作指令）。真机验收：首试 1.2s 超时（冷连接握手占大头）→ 重试成功（连接复用），端到端 3.3s——连接预热/预算再平衡列后续优化项。
 
 ### 日志设施（2026-08-18，产品级）
 
