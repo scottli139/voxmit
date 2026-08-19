@@ -172,6 +172,7 @@
 
 - 2026-08-19：Phase 8 落地。新增 `Modules/Injector/InjectionAdapter.swift`（纯逻辑：换行折叠决策与实现）与 `Modules/Injector/ClipboardInjector.swift`（`PasteboardManaging`/`KeyEventPosting` 系统抽象协议 + `ClipboardInjector` 实装 + `SystemPasteboardManager`/`SystemKeyEventPoster` 真实系统服务）；`VoxmitAppDelegate` 注入替换占位；`PlaceholderClipboardInjector` 注释更新为仅作默认占位。
 - 2026-08-19：Phase 8 设计要点——剪贴板快照→写入→CGEventPost Cmd+V→约 300ms 后按 changeCount 竞争保护恢复；无 AX 权限/pid 0/空 bundleID 降级仅写剪贴板且不恢复（文本留存供手动粘贴）；CLI 目标（terminal）默认折叠换行为空格（`inject.collapseNewlines` 默认 true）；FR-F4 自动发送默认关（`inject.autoSend`），粘贴后约 150ms 模拟 Return；取消分支尽力恢复剪贴板避免污染、取消时跳过 autoSend。NSPasteboard 全部 MainActor.run（协议非隔离 async 跳池线程，沿用 Phase 5 占位教训）。单测 +12（240 总），build/test 全绿。
+- 2026-08-19：注入偶发卡「注入中」真机 bug 修复——`sample` 主线程空闲 + 注入任务无线程栈符号，定位为 `ClipboardInjector.inject` 非隔离 async 在 await 后跨执行器 hop 偶发丢 continuation（非死锁/阻塞）；`inject`/`sleep` 标 `@MainActor` 锚定主线程，`ClipboardInjectorTests` 同步 `@MainActor` 适配。build/test 全绿（TEST SUCCEEDED）。
 
 ### Phase 9: 联调与 MVP 验收 📋
 

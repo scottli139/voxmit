@@ -104,6 +104,13 @@
 - **结论**：全量 `xcodebuild test` 正常（TEST SUCCEEDED，242 例，测试主体约 5.5s），定向该 suite 才挂——是定向收集路径 + 该 suite 内 async + MockClock + MainActor settle 循环在 test host 环境下的既有死锁，与具体用例改动无关。
 - **应对**：日常验证走**全量** `xcodebuild test -scheme Voxmit -destination 'platform=macOS'`；需要定向快速反馈时可先 build + 只跑纯同步 suite（如 `LLMClientTests`），避免 `PromptRefinerTests` 定向死锁。挂起的 `xcodebuild` 终止后，test host 残留进程需 `pkill -f 'DerivedData/.*/Voxmit.app/Contents/MacOS/Voxmit'` 清理（否则菜单栏残留多个 Voxmit 图标；`/Applications` 正式实例 `pkill -x Voxmit` 会一并杀掉，测试残留用上述路径精确匹配清理）。
 
+### 注入偶发卡在「注入中」：async continuation 跨执行器丢失（2026-08-19 已修复）
+
+- **现象**：真机偶发注入后 HUD 停在「注入中」，日志止于「已模拟 Cmd+V」，无后续「已恢复原剪贴板」/`state: injecting → injected`；`sample` 采样主线程空闲（`mach_msg` 等事件），注入任务在任何线程栈上都没有符号——即 async 任务挂起且 continuation 永不恢复，不是死锁/阻塞。
+- **根因**：`ClipboardInjector.inject` 原为非隔离 async 方法，从 `@MainActor` 的 `processRecording` 调用后，在 await 点落到通用执行器；随后 `Task.sleep` 与 `MainActor.run` 的跨执行器 hop（通用执行器 ↔ MainActor）偶发丢失 continuation。
+- **修复**：`inject` 与内部 `sleep` 显式标 `@MainActor`，整条注入链锚定主线程，消除跨执行器 hop；`ClipboardInjectorTests` 同步改 `@MainActor`（否则虚拟时钟的 `yield`/`advance` 无法驱动 MainActor 上的注入任务推进）。Swift 6 允许 `@MainActor` witness 非隔离 async 协议要求（隔离收紧）。
+- **教训**：关键路径上的「延迟 + 事后恢复」应显式锚定单一 actor；跨执行器 async hop 在 Swift 6 偶发丢失 continuation，且不表现为崩溃或阻塞，极难排查（要靠日志断点 + 主线程采样结合定位）。
+
 ## 架构要点
 
 ### 权限自检（Phase 1，FR-G5）
