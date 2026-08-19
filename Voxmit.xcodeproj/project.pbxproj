@@ -23,6 +23,7 @@
 /* Begin PBXFileReference section */
 		5A000000000000000000000F /* Voxmit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Voxmit.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A0000000000000000000010 /* VoxmitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VoxmitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A0000000000000000000030 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -73,10 +74,19 @@
 		5A0000000000000000000002 = {
 			isa = PBXGroup;
 			children = (
+				5A0000000000000000000031 /* Configurations */,
 				5A0000000000000000000004 /* Voxmit */,
 				5A0000000000000000000005 /* VoxmitTests */,
 				5A0000000000000000000003 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		5A0000000000000000000031 /* Configurations */ = {
+			isa = PBXGroup;
+			children = (
+				5A0000000000000000000030 /* Signing.xcconfig */,
+			);
+			path = Configurations;
 			sourceTree = "<group>";
 		};
 		5A0000000000000000000003 /* Products */ = {
@@ -343,12 +353,10 @@
 		};
 		5A0000000000000000000017 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5A0000000000000000000030 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Voxmit/Info.plist;
@@ -365,12 +373,10 @@
 		};
 		5A0000000000000000000018 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5A0000000000000000000030 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Voxmit/Info.plist;
@@ -387,11 +393,10 @@
 		};
 		5A000000000000000000001A /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5A0000000000000000000030 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 0.1.0;
@@ -404,11 +409,10 @@
 		};
 		5A000000000000000000001B /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5A0000000000000000000030 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 0.1.0;

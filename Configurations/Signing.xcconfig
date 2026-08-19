@@ -1,0 +1,18 @@
+// 签名配置（提交入库的默认值）：ad-hoc 本地签名，任何环境 clone 即可构建与测试。
+//
+// 本机持有 Apple Developer ID 证书时，创建 Configurations/LocalSigning.xcconfig
+// 覆盖以下设置（该文件已加入 .gitignore；证书名称 / Team ID 等本地私有信息禁止提交）：
+//
+//     CODE_SIGN_IDENTITY = Developer ID Application
+//     CODE_SIGN_STYLE = Manual
+//     DEVELOPMENT_TEAM = <你的 Team ID>
+//
+// #include? 为可选包含：文件缺失时静默忽略（其他机器 / CI 无此文件照常构建）。
+CODE_SIGN_IDENTITY = -
+CODE_SIGN_STYLE = Automatic
+// hardened runtime：ad-hoc 构建无影响，Release 分发（公证）需要，默认开启；
+// 本机 Developer ID 未公证部署须在 LocalSigning.xcconfig 中按 Debug 关闭
+// （macOS 26 实测：Developer ID + hardened runtime + 未公证 → 麦克风授权被静默拒绝，
+//  无弹窗、无 TCC 记录，见 docs/implementation-notes.md）
+ENABLE_HARDENED_RUNTIME = YES
+#include? "LocalSigning.xcconfig"

@@ -17,6 +17,8 @@ build/
 *.cer
 *.mobileprovision
 *.provisionprofile
+# 本地签名覆盖（证书名称 / Team ID 为本地私有信息，禁止入库）
+/Configurations/LocalSigning.xcconfig
 
 # 本地模型文件（WhisperKit 等，运行时下载）
 Models/
