@@ -53,6 +53,17 @@ private func makeContext(selectedText: String? = nil) -> VoiceContext {
 
 struct PromptRefinerTests {
 
+    @Test func budgetConstants_v010Allocation() {
+        // v0.10 预算分配：3.5 + 0.3 + 3.5 = 7.3s
+        // （冷连接握手 2.6s 内首试完成并入池、热连接重试 2.9s < 3.5s 兜底）
+        #expect(PromptRefiner.firstAttemptTimeout == 3.5)
+        #expect(PromptRefiner.retryBackoff == 0.3)
+        #expect(PromptRefiner.retryAttemptTimeout == 3.5)
+        #expect(PromptRefiner.firstAttemptTimeout
+            + PromptRefiner.retryBackoff
+            + PromptRefiner.retryAttemptTimeout == 7.3)
+    }
+
     private func makeRefiner(
         client: MockChatCompleting,
         clock: MockClock,
@@ -200,7 +211,7 @@ struct PromptRefinerTests {
 
         let task = Task { await refiner.refine(raw: "原文", context: makeContext()) }
         for _ in 0..<12 { await Task { @MainActor in }.value }
-        // 首次预算到点（2.0s）→ 退避（0.3s）→ 重试预算到点（2.0s）
+        // 首次预算到点（3.5s）→ 退避（0.3s）→ 重试预算到点（3.5s）
         clock.advance(by: PromptRefiner.firstAttemptTimeout)
         for _ in 0..<12 { await Task { @MainActor in }.value }
         clock.advance(by: PromptRefiner.retryBackoff)
@@ -325,6 +336,12 @@ struct LLMPrewarmerTests {
         #expect(recorder.requests[0].url?.absoluteString == "https://api.test/v1/models")
         #expect(recorder.requests[0].value(forHTTPHeaderField: "Authorization") == "Bearer k")
         #expect(recorder.requests[0].timeoutInterval == LLMPrewarmer.timeout)
+    }
+
+    @Test func prewarm_timeoutConstantCoversTlsHandshake() {
+        // 实测 TLS 握手 2.3~2.7s：预热超时必须大于握手时间（曾取 2s 致预热永远失败形同虚设）
+        #expect(LLMPrewarmer.timeout == 8.0)
+        #expect(LLMPrewarmer.timeout > 2.7)
     }
 
     @Test func prewarm_disabledOrNoKey_skipsRequest() async {

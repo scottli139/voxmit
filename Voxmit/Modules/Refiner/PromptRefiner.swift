@@ -13,11 +13,12 @@ final class PromptRefiner: PromptRefining, @unchecked Sendable {
         var enabled: Bool
     }
 
-    /// 时序预算（2026-08-19 放宽，需求文档 §4.2.4）：首次尝试 2.0s + 退避 0.3s + 重试 2.0s = 4.3s
-    /// （原因：Moonshot 响应波动 + 冷连接 TLS 握手，3s 预算下超时回退率过高；"润色成功但略慢"优于"快但未润色"）
-    static let firstAttemptTimeout: TimeInterval = 2.0
+    /// 时序预算（2026-08-19 第二次放宽，需求文档 §4.2.4 v0.10）：首次尝试 3.5s + 退避 0.3s + 重试 3.5s = 7.3s
+    /// 实测依据（本机 curl api.moonshot.cn）：TLS 握手 2.3~2.7s、冷连接 chat 3.8~5.0s、
+    /// 热连接纯服务端处理 1.2~2.9s——冷连接首试 3.5s 内握手完成并入池，重试走热连接 2.9s < 3.5s 兜底
+    static let firstAttemptTimeout: TimeInterval = 3.5
     static let retryBackoff: TimeInterval = 0.3
-    static let retryAttemptTimeout: TimeInterval = 2.0
+    static let retryAttemptTimeout: TimeInterval = 3.5
 
     /// 请求体约束（§4.2.4：输出 < 500 tokens）
     static let maxTokens = 500
@@ -70,7 +71,7 @@ final class PromptRefiner: PromptRefining, @unchecked Sendable {
         )
         let startedAt = Date()
 
-        // 首次尝试（≤2.0s）
+        // 首次尝试（≤3.5s）
         if let text = await attempt(request, timeout: Self.firstAttemptTimeout, attemptNumber: 1) {
             return finish(text: text, startedAt: startedAt, model: settings.model, inputCount: raw.count)
         }
@@ -82,7 +83,7 @@ final class PromptRefiner: PromptRefining, @unchecked Sendable {
             return (raw, false)
         }
 
-        // 重试一次（≤2.0s）
+        // 重试一次（≤3.5s）
         if let text = await attempt(request, timeout: Self.retryAttemptTimeout, attemptNumber: 2) {
             return finish(text: text, startedAt: startedAt, model: settings.model, inputCount: raw.count)
         }

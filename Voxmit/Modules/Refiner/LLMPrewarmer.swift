@@ -8,8 +8,10 @@ import Foundation
 /// （VoxmitAppDelegate 中同一个 llmSession 注入两侧）。失败静默（DEBUG 级）；
 /// 不打响应体、不落 API Key；进行中不重复发。
 final class LLMPrewarmer: @unchecked Sendable {
-    /// 预热请求超时（轻量探测，不阻塞主链路）
-    static let timeout: TimeInterval = 2.0
+    /// 预热请求超时（轻量探测，不阻塞主链路）。
+    /// 实测 api.moonshot.cn TLS 握手 2.3~2.7s：预热超时必须大于握手时间，
+    /// 否则预热永远失败、形同虚设（本项由 2s 提至 8s 的实证依据，见 implementation-notes）
+    static let timeout: TimeInterval = 8.0
 
     /// 请求执行点（默认共享 URLSession；单测注入 mock，禁真实网络）
     typealias RequestExecutor = @Sendable (URLRequest) async throws -> (Data, URLResponse)
