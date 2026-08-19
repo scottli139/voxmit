@@ -44,6 +44,7 @@ struct ClipboardInjector: TextInjecting {
         self.collapseNewlinesProvider = collapseNewlinesProvider
     }
 
+    @MainActor
     func inject(text: String, into target: TargetSnapshot, autoSend: Bool) async -> InjectionOutcome {
         // 1. 换行折叠（终端目标默认开启；设置/分类决策在 InjectionAdapter）
         let category = AppCategoryMapper.category(for: target.bundleID)
@@ -94,6 +95,7 @@ struct ClipboardInjector: TextInjecting {
 
     /// 睡眠辅助：正常睡完返回 true；被取消返回 false（吞掉取消异常，
     /// 让上层 Pipeline 的 Task.checkCancellation() 收尾，同时取消时跳过 autoSend）。
+    @MainActor
     private func sleep(for interval: TimeInterval) async -> Bool {
         do {
             try await clock.sleep(for: interval)

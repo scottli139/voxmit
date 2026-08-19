@@ -28,6 +28,9 @@ struct InjectionAdapterTests {
 }
 
 /// ClipboardInjector（Phase 8 P0）降级/完整流程/竞争保护
+/// inject 为 @MainActor（真机修复：跨执行器 hop 偶发丢失 continuation，见 implementation-notes），
+/// 测试同样跑在 MainActor 上，让虚拟时钟的 yield/advance 能可靠驱动注入任务推进。
+@MainActor
 struct ClipboardInjectorTests {
 
     /// 测试装置：共享事件日志 + mock 剪贴板/按键 + 虚拟时钟
