@@ -133,6 +133,37 @@ struct RefinePromptNoContextTests {
         #expect(message.contains("【口述内容】"))
         #expect(message.contains("帮我写个函数"))
     }
+
+    @Test func userMessage_terminalTarget_omitsWindowTitle() {
+        let context = VoiceContext(
+            target: TargetSnapshot(pid: 1, bundleID: "com.apple.Terminal", appName: "Terminal",
+                                   windowTitle: "voxmit — zsh — 200×63", capturedAt: Date()),
+            appCategory: .terminal,
+            selectedText: nil,
+            cliSession: nil
+        )
+
+        let message = RefinePrompt.userMessage(raw: "可以了，提交吧", context: context)
+
+        #expect(message.contains("当前 App：Terminal"))
+        #expect(!message.contains("窗口标题")) // terminal 窗口标题噪声大，省略防脑补
+        #expect(message.contains("可以了，提交吧"))
+    }
+
+    @Test func userMessage_nonTerminalTarget_includesWindowTitle() {
+        let context = VoiceContext(
+            target: TargetSnapshot(pid: 1, bundleID: "com.microsoft.VSCode", appName: "Visual Studio Code",
+                                   windowTitle: "voiceprompt — main.swift", capturedAt: Date()),
+            appCategory: .editor,
+            selectedText: nil,
+            cliSession: nil
+        )
+
+        let message = RefinePrompt.userMessage(raw: "这个函数为什么报错", context: context)
+
+        #expect(message.contains("当前 App：Visual Studio Code"))
+        #expect(message.contains("窗口标题：voiceprompt — main.swift"))
+    }
 }
 
 /// 松手时前台校验（§3.4.3：以松手时前台为准）

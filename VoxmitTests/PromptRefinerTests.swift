@@ -153,10 +153,10 @@ struct PromptRefinerTests {
 
         #expect(result == ("润色后的工程 Prompt", true))
         #expect(client.requests.count == 1)
-        // user message 组装：上下文（App 名/窗口标题）+ 口述原文
+        // user message 组装：上下文（App 名；terminal 类省略窗口标题）+ 口述原文
         let user = client.requests[0].messages[1].content
         #expect(user.contains("当前 App：Terminal（com.apple.Terminal）"))
-        #expect(user.contains("窗口标题：voxmit — zsh"))
+        #expect(!user.contains("窗口标题")) // terminal 目标省略窗口标题（噪声大，防脑补）
         #expect(user.contains("这个函数为什么报错"))
     }
 
@@ -254,9 +254,10 @@ struct PromptRefinerTests {
         #expect(request.messages.count == 2)
         #expect(request.messages[0].role == "system")
         #expect(request.messages[0].content.contains("Prompt 工程师"))
-        // v0.11 防脑补约束（真机反馈：上下文被当成操作对象脑补出「创建笔记」等动作）
-        #expect(request.messages[0].content.contains("不得当作操作对象"))
-        #expect(request.messages[0].content.contains("禁止脑补"))
+        // v0.12 防脑补约束（真机反馈：口述"可以了，提交吧"被结合 Terminal 标题脑补成窗口操作）
+        #expect(request.messages[0].content.contains("绝不能被当作要操作"))
+        #expect(request.messages[0].content.contains("口述里没有的东西一律不得出现"))
+        #expect(request.messages[0].content.contains("短促的对话/流程用语"))
         #expect(request.messages[1].role == "user")
     }
 
