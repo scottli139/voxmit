@@ -197,11 +197,15 @@ stateDiagram-v2
   - `TranscriptionEngineResolver`（纯逻辑）+ `TranscriptionEngineRouter`（@unchecked Sendable + NSLock，`use()` 主线程写、`transcribe` 任意线程读）：Pipeline 持有稳定引用，运行时按"设置 + 模型就绪"热切换；模型未就绪自动 Speech 兜底。
 - **规划**：流式转写 FR-C2、自定义词表 FR-C4、云端 ASR FR-C3 均为 P1。
 
-### 4.6 PromptRefiner —— Prompt 润色（规划，Phase 6）
+### 4.6 PromptRefiner —— Prompt 润色（已实现，Phase 6）
 
-- **协议（已定义，§9.1）**：`PromptRefining: Sendable`（`refine(raw:context:) async -> (text, refined)`，`refined` 标记供 HUD 角标）。
-- **现状**：占位 `NoOpPromptRefiner` 原样返回、标记未润色。Pipeline 已接线：FR-D4 旁路跳过、超时回退语义由协议约定（实现内部处理）。
-- **规划要点（§4.2.4）**：OpenAI 兼容端点（默认 Kimi/Moonshot，Key 存 Keychain）、3s 总超时 + 1 次快速重试、上下文 2KB 截断、首次启用隐私告知。
+- **协议（§9.1）**：`PromptRefining: Sendable`（`refine(raw:context:) async -> (text, refined)`，`refined` 标记供 HUD 角标）。
+- **实现**（`Voxmit/Modules/Refiner/`）：
+  - `PromptRefiner`：`PromptRefining` 实装——未配 Key 或 `llm.refineEnabled=false` 直出原文；隐私门（`llm.privacyAcknowledged`，首次实际发送前必挡一次，门为注入闭包）；3s 总预算（首次 1.2s + 退避 0.3s + 重试 1.5s，`withThrowingTaskGroup` 竞速）；任何异常回退 `(raw, false)`。
+  - `LLMClient`：`ChatCompleting: Sendable` 协议 + `OpenAIChatClient`（`POST {baseURL}/chat/completions`，Bearer 从 Keychain 读；`makeRequest/parseContent` 静态纯函数可单测）；错误分类 missingAPIKey / httpStatus / invalidResponse。
+  - `RefinePrompt`：§9.1 system prompt 模板原文；user message = 上下文补充块（App 名+bundleID、窗口标题、选区 ≤2KB UTF-8 安全截断）+ 口述原文。
+- **接线**：`VoxmitAppDelegate` 注入替换 `NoOpPromptRefiner`；隐私门实现为 AppDelegate 弹 NSAlert（先 `NSApp.activate()`）；旁路（FR-D4）在状态机层（Phase 2 已接入 skipRefinement）。日志 category `refiner`。
+- **规划**：润色风格配置（FR-D3）、指代消解增强（FR-D2，依赖 Phase 7 上下文）均为 P1。
 
 ### 4.7 ContextCollector —— 上下文感知（规划，Phase 7）
 

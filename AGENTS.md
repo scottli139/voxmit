@@ -11,7 +11,7 @@
 - 构建与测试命令（CI 尚未建立，本地执行）：
   - `xcodebuild build -scheme Voxmit -destination 'platform=macOS'`
   - `xcodebuild test -scheme Voxmit -destination 'platform=macOS'`
-- 工程要点：手写 pbxproj（objectVersion 70，`Voxmit/` 与 `VoxmitTests/` 为文件系统同步分组，新增源码文件免改 pbxproj）；本地 ad-hoc 签名；Swift 6 严格并发。踩坑记录见 `PLAN.md` Phase 0 的 Session 记录。
+- 工程要点：手写 pbxproj（objectVersion 70，`Voxmit/` 与 `VoxmitTests/` 为文件系统同步分组，新增源码文件免改 pbxproj）；签名走 xcconfig 分层——`Configurations/Signing.xcconfig`（入库，默认 ad-hoc）+ `Configurations/LocalSigning.xcconfig`（gitignored，本机 Developer ID 覆盖；证书名称/Team ID 属本地私有信息，禁止提交，2026-08-19 起本机已启用稳定签名，TCC/Keychain 授权跨构建持久）；Debug 构建本机关闭 hardened runtime（macOS 26：Developer ID + runtime + 未公证 → 麦克风授权静默拒绝，见 implementation-notes）；Swift 6 严格并发。踩坑记录见 `PLAN.md` Phase 0 的 Session 记录。
 - §4 的模块划分目前仅落地了工程骨架与接口契约（需求文档 §9.1）；实现模块时以需求文档 §4.2/§3.4 为准，不要臆造尚未实现的行为。
 
 ### 文档地图
@@ -62,7 +62,7 @@
 - **AudioCapture**（Phase 3 已落地，`Modules/Audio/`）—— 音频采集；AVAudioEngine + AVAudioConverter 重采样 16kHz mono Float32，仅存内存不落盘；50ms 电平发布（Combine）、5 分钟上限看门狗（`MaxDurationWatchdog`，回调接 `VoicePipeline.handleMaxRecordingDuration`）、设备热切换重建续录；纯逻辑（电平/静音裁剪/重采样/设备决策）拆在 `AudioProcessing.swift` 可单测。
 - **RecordingHUD**（Phase 4 已落地，`UI/RecordingHUD.swift`）—— 非激活 NSPanel 录音浮层（不抢焦点、全屏/多 Space 可见）；波形 + 阶段状态 + 反馈态（成功/未润色角标/手动粘贴/失败）；停留时长由 `HUDVisibility` 纯函数决策、计时在 HUD 侧（状态机终止态保持即刻回 idle）；反馈数据源自 Pipeline 的 `lastInjectionReport`。
 - **TranscriptionEngine** —— 转写引擎抽象为协议，WhisperKit（默认 small 模型）/ Speech / 云端可运行时切换；支持自定义热词词表。
-- **PromptRefiner** —— LLM 润色（去口水词、句式规范化、指代消解）；超时 3 秒回退注入原始转写；提供旁路开关（右 Option+Shift 跳过润色）。
+- **PromptRefiner**（Phase 6 已落地，`Modules/Refiner/`）—— LLM 润色（去口水词、句式规范化、指代消解）；OpenAI 兼容端点（Keychain 存 Key），3s 预算（1.2+0.3+1.5）超时/失败回退注入原文；首次实际发送前隐私告知门（`llm.privacyAcknowledged`）；旁路开关（右 Option+Shift 跳过润色）。
 - **ContextCollector** —— 前台 App 识别、选中文本/光标读取；热键按下时快照注入目标（FR-F5，见文档 §3.4.3）；无权限时静默降级为"无上下文"模式。
 - **Injector** —— 三档注入：剪贴板+模拟粘贴（通用兜底，模拟按键需"辅助功能"权限）/ AX 写入（`AXSelectedText` 光标处插入，禁止覆盖已有输入）/ CLI stdin 直通；注入前预览浮层（P1）；注入后恢复原剪贴板内容。
 - **MCP Server（V2）** —— 暴露 `listen_voice` 工具，供 AI Agent 主动调用获取语音输入。

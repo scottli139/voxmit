@@ -122,15 +122,24 @@
 - 2026-08-18：模型下载器决策反转（真机最小复现确诊三连根因：镜像 resolve-cache HEAD 缺 Content-Length 触发 swift-transformers metadata 校验死、tokenizer 属另一仓库需独立联网被墙挂、删目录自愈会毁好文件）——弃用 `WhisperKit.download`，自实现 `Modules/Transcription/ModelRepoDownloader.swift`（tree API 清单 → 逐文件 GET + `.partial` Range 续传 + 完成校验 + 原子移动 + tokenizer 两文件落模型目录根离线激活）+ `URLSessionRepoHTTPClient.swift`（前台 data task 流式写盘通道）；`markInvalidModel` 去删除化（保留 failed + 每会话自动重试一次）；引擎激活 `WhisperKitConfig` 显式传 `downloadBase`；-997 回退逻辑随前台化移除。单测 +13/-5（173 总），build/test 全绿。
 - 2026-08-18：HUD 失败态长文案截断修复（面板一次性定尺寸 + 文案无换行约束所致；文案列宽上限 320 + lineLimit(3) + fixedSize(vertical:)，hosting controller 开 `sizingOptions = .preferredContentSize` + KVO 订阅随内容调整面板，`HUDLayout` 纯逻辑钳制防回环）。Speech 兜底中文识别修复：默认 locale 英文识别中文出胡话——新增 `asr.speechLocale` 键（默认 zh-CN，无 UI），`SpeechLocaleResolver` 纯解析；端侧语言资产缺失（听写语言列表未加中文）与不支持 locale 分别映射 `onDeviceLanguageMissing` / `localeUnsupported` 可操作文案；`requiresOnDeviceRecognition = true` 端侧口径不变。单测 +5（165 总），build/test 全绿。
 
-### Phase 6: Prompt 润色 📋 (FR-D1, FR-D4)
+### Phase 6: Prompt 润色 ✅ (FR-D1, FR-D4)
 
 依赖：Phase 5、Phase 7
 
-- [ ] OpenAI 兼容 `chat/completions` client（baseURL / model 可配，Key 从 Keychain 读取）
-- [ ] System prompt 模板落地（需求文档 §9.1）+ 上下文组装（选区 ≤ 2KB 截断）
-- [ ] 3s 总超时 + 1 次快速重试（退避 300ms）+ 回退原文（返回 `refined` 标记）
-- [ ] 未配置 Key 直出模式；首次启用润色的隐私告知弹窗
-- [ ] 单测：超时 / 失败 / 旁路 / 截断矩阵
+- [x] OpenAI 兼容 `chat/completions` client（baseURL / model 可配，Key 从 Keychain 读取）
+- [x] System prompt 模板落地（需求文档 §9.1）+ 上下文组装（选区 ≤ 2KB 截断）
+- [x] 3s 总超时 + 1 次快速重试（退避 300ms）+ 回退原文（返回 `refined` 标记）
+- [x] 未配置 Key 直出模式；首次启用润色的隐私告知弹窗
+- [x] 单测：超时 / 失败 / 旁路 / 截断矩阵
+
+- 2026-08-19：Phase 6 落地。新增 `Modules/Refiner/`：`LLMClient.swift`（`ChatCompleting` 协议 + `OpenAIChatClient`：makeRequest/parseContent 静态纯函数可单测，错误分类 missingAPIKey/httpStatus/invalidResponse，日志只落类别）、`RefinePrompt.swift`（§9.1 system prompt 原文 + user message 组装 + UTF-8 安全截断）、`PromptRefiner.swift`（3s 预算分配 1.2+0.3+1.5、TaskGroup 预算竞速、隐私门注入点）。
+- 2026-08-19：隐私门设计——`llm.refineEnabled` 默认 true，挡在**首次实际发送前**（`llm.privacyAcknowledged` 键）：AppDelegate `confirmRefinePrivacy()` 弹 NSAlert（先 NSApp.activate 防 LSUIElement 藏窗），「继续」记键放行、「本次跳过」返回 false 不发请求且下次再问；单测注入 true/false 双路径。旁路（FR-D4 右 Option+Shift）在 Phase 2 已接入状态机，本期自然生效（跳过润色、wasRefined=false）。
+- 2026-08-19：验证全绿——build 成功、test 197 用例通过（180 + 新增 17：直出矩阵/隐私门/重试恰好一次/双败回退/超时预算竞速（MockClock 不真睡）/2KB 截断 UTF-8 安全/请求体字段/客户端组装解析）。真实 API 调用（用户 Moonshot Key）属真机验收项。
+- 2026-08-19：真机联调排障①日志增强——润色三条直出路径（开关关闭/未配 Key/FR-D4 旁路）补打点、attempt 失败带序号+单次耗时、成功带模型+输入输出字数、URLError 细化记 code、启动记录 LLM 设置快照（端点/模型/开关/有无 Key）、httpStatus 携带服务端响应体摘录（≤500 字符；请求体与 Key 永不落日志）。
+- 2026-08-19：真机联调排障②Keychain 反复弹授权窗（润色一次连弹 4 次、启动也弹）——根因 ad-hoc 签名 ACL 无法持久信任且一次 SecItem 调用可连弹多窗；`KeychainHelper` 加进程内内存缓存（NSLock 串行首次读取），会话内只真实读一次，弹窗合并到启动期。
+- 2026-08-19：真机联调排障③签名改 xcconfig 分层——`Configurations/Signing.xcconfig`（入库默认 ad-hoc + hardened runtime）+ `LocalSigning.xcconfig`（gitignored，本机 Developer ID 覆盖，证书信息禁止提交）；探针实证 **macOS 26「Developer ID + hardened runtime + 未公证 → 麦克风授权静默拒绝」**（无弹窗无 TCC 记录），本机 Debug 关 runtime 解决；此后 TCC 三项权限与 Keychain 信任跨构建持久。详见 implementation-notes。
+- 2026-08-19：真机联调排障④temperature 400——Kimi Code 端点仅允许 temperature=1，请求体改为不携带 temperature（各服务商走默认值）。
+- 2026-08-19：端点选型实测——Kimi Code 端点（kimi-for-coding 系列）结构性不适合润色后端：强制思考且计入 max_tokens（500 额度正文被吃光吐空串）、延迟 3~6.6s 超 3s 预算；Moonshot 开放平台 moonshot-v1-8k 实测 0.6~2s、无强制思考、工程口述质量达标。**真机验收通过**：转写 918ms → 首试 1.2s 超时（冷连接）→ 重试成功（润色 2364ms，11 字 → 31 字），`已润色=true`。
 
 ### Phase 7: 上下文快照 📋 (FR-E1, FR-F5)
 

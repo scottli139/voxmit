@@ -22,6 +22,7 @@
 - 原因：开发构建为 ad-hoc 签名，designated requirement 仅 cdhash（`codesign -dr - <app>` 可查），无 Team ID；TCC 辅助功能授权绑定签名身份，此前自动创建/旧构建留下的条目对当前二进制无效——列表里开关显示为开，实为失效条目。
 - 应对（实测有效）：系统设置中 "−" 移除 Voxmit → `tccutil reset Accessibility com.voxmit.app` → 手动 "+" 重新添加当前构建并打开开关（必要时重启 App）。
 - 开发期注意：重新构建会改变 cdhash，辅助功能授权可能需重做上述步骤；根治靠稳定签名身份——开发期可用 Xcode 登录个人 Apple ID 的 "Apple Development" 证书，发布构建走 Developer ID + 公证（需求文档 §4.4）。
+- **2026-08-19 已根治（本机）**：签名改为 xcconfig 分层（`Configurations/Signing.xcconfig` 入库默认 ad-hoc + `LocalSigning.xcconfig` gitignored 覆盖为本机 Developer ID），TCC 授权与 Keychain 信任跨构建持久；切换签名身份后需重做一次性授权（TCC 三项 + Keychain 条目删旧重建）。其他机器无 LocalSigning.xcconfig 时仍按 ad-hoc 构建，本条目上文依旧适用。
 
 ### 热键 keyUp 丢失导致永久失效（2026-08-18 已修复）
 
@@ -77,6 +78,25 @@
 - **修复**：`kit.transcribe(audioArray:decodeOptions:)` 传 `DecodingOptions(language:)`，取设置键 `asr.whisperLanguage`（默认 `"zh"` 锁中文，`"auto"` 恢复自动检测）；`WhisperLanguageResolver` 纯解析。
 - **API 结论（包源码核实）**：`DecodingOptions.language: String?`（Configurations.swift:159），取 ISO 639-1 码（"zh"/"en"/"ja"…），`Constants.languageCodes` 为合法集（"chinese"/"mandarin" 亦映射到 "zh"）；nil = 自动检测（`options.language == nil` 走检测分支，TextDecoder.swift:998）。
 - **注意**：锁中文后中英文混识不受影响（纯英文音频仍转英文，只是检测不再摇摆）；转写日志已补 `language=` 字段供识别质量排查。
+
+### Keychain 反复弹授权窗：ad-hoc 签名 ACL 不信任（2026-08-19 已缓解）
+
+- **现象**：润色一次连弹 4 次钥匙串密码窗，启动也弹 4 次；且因弹窗阻塞（Keychain 同步读无法响应取消），润色 1.2s 尝试预算被拖到 ~4s，日志表现为 `timeout`。
+- **根因**：ad-hoc 签名的 cdhash 随每次构建变化，macOS 无法用 designated requirement 表达「信任此 app」，「始终允许」无法持久化；securityd 对不可信调用方一次 SecItem 调用也可能连弹多个授权窗。一次润色有 3 次读 Key（refiner 守卫 + 两次 attempt 内 client），启动时设置快照日志再读 1 次，各自弹窗。
+- **缓解**（KeychainHelper 内存缓存，NSLock 串行化首次读取）：会话内只真实读一次 Keychain，弹窗合并到启动期（启动的设置快照日志即触发），润色 3s 预算内零 Keychain 阻塞；读/写/删均同步缓存。
+- **同一构建内零弹窗的办法**：删除旧构建创建的条目（`security delete-generic-password -s com.voxmit.app -a llm-api-key`）后由当前构建重新保存（SecItemAdd 的创建者天然被信任；SecItemUpdate 只改数据不改 ACL，所以必须删了重建）。
+- **根治**：稳定签名身份——本机 2026-08-19 起以 Developer ID 本地签名（xcconfig 分层机制，见「ad-hoc 签名下"辅助功能"授权条目失效」条目），授权一次跨构建持久；无本地覆盖的 ad-hoc 构建每次重新部署后最多容忍一次弹窗。
+
+### macOS 26：Developer ID + hardened runtime + 未公证 → 麦克风授权静默拒绝（2026-08-19 已修复）
+
+- **现象**：Developer ID 签名部署后，麦克风点「请求授权」直接变「已拒绝」；系统设置麦克风列表始终不出现 Voxmit；TCC 用户库无任何麦克风条目（决策根本没走到记录层）。输入监控 / 辅助功能不受影响。
+- **探针隔离矩阵**（最小 MicProbe.app，同二进制同 bundle id，仅签名不同）：
+  - ad-hoc：弹窗 → 允许 → authorized；
+  - Developer ID + `--options runtime`（hardened runtime）：无弹窗秒拒、TCC 无记录；
+  - Developer ID 不加 runtime：弹窗 → 允许 → authorized。
+- **结论**：macOS 26（26.6 beta 实测）把「hardened runtime + Developer ID + 无公证票据」按待分发产物处理，麦克风类敏感权限静默拒绝；ad-hoc 与「Developer ID 无 runtime」按本地开发放行。
+- **修复**：签名 xcconfig 分层中，入库默认 `ENABLE_HARDENED_RUNTIME = YES`（ad-hoc 无影响、Release 公证分发需要），本机 `LocalSigning.xcconfig` 覆盖 `ENABLE_HARDENED_RUNTIME[config=Debug] = NO`；Release 分发构建保持开启且必须走 Apple 公证。
+- **排除过的嫌疑**：Xcode 自动注入的 Debug 测试 entitlements（`temporary-exception.mach-lookup` / `get-task-allow` 等）——清空后 hardened runtime 下依旧拒绝，与 entitlements 无关；`tccutil reset` / 删除条目重建也无效（问题不在 TCC 记录层）。
 
 ## 架构要点
 
@@ -137,6 +157,15 @@
 - **根因三（设计失误，已撤）**：markInvalidModel 初版会删除变体目录——激活失败可能是网络原因，删目录毁掉 484MB 好文件。
 - **自实现下载器**（`Modules/Transcription/ModelRepoDownloader.swift` + `URLSessionRepoHTTPClient.swift`）：tree API 拿清单（`GET <endpoint>/api/models/<repo>/tree/main/<variant>?recursive=true`，大小取 size 字段）；逐文件 `GET <endpoint>/<repo>/resolve/main/<path>`（`.partial` + `Range: bytes=N-` 续传 + 完成校验 + 原子移动，**不依赖 HEAD**）；tokenizer 同法下载 `openai/whisper-<variant>` 两文件放模型目录根；单文件失败重试 2 次（退避 1s/3s，PipelineClock 注入）；取消抛 CancellationError 不重试。幂等重入：完整文件跳过（原子移动落盘即完整）、完整 partial 直接移动（崩在移动前的恢复）、半截 partial 续传。进度聚合 `DownloadProgressTracker`：总字节随响应动态回填（镜像小文件无大小属正常）。可观测性：清单/每文件完成（名+大小+耗时）/失败原因均带端点打点。
 - **教训**：依赖的"隐形网络面"要全部摸清（模型 + tokenizer 是两个仓库）；上游库的环境假设（HEAD 头部齐全）在你的目标网络（镜像 cache 层）不成立时，果断自实现——决策反转不可耻，诊断可见性是底线。
+
+### Prompt 润色（Phase 6，FR-D1/FR-D4）
+
+- **3s 预算分配**：§4.2.4 总预算 3s 拆为 首次尝试 1.2s + 退避 0.3s + 重试 1.5s——重试恰好一次、总时长不越线（`withThrowingTaskGroup` 竞速：请求任务 vs `PipelineClock.sleep(预算)` 哨兵，哨兵赢则 `cancelAll`；MockClock 下单测不真睡）。失败/超时/未配 Key 一律 `(raw, false)` 回退，不阻断主链路。
+- **隐私门为什么挡在"首次实际发送前"**：`llm.refineEnabled` 默认 true，用户可能不进设置页就直接使用——在 App 启动或开关打开时弹窗都为时过早且无感，唯一可靠拦截点是"第一次真正要发送转写文本"。实现：`llm.privacyAcknowledged` 键 + PromptRefiner 注入 `@Sendable () async -> Bool` 门（AppDelegate 弹 NSAlert，「继续」记键、「本次跳过」返回 false 下次再问）；未配 Key 或开关关闭时门根本不被调用。LSUIElement 弹窗先 `NSApp.activate()`（同设置窗口置顶坑）。
+- **LLM 客户端**：`ChatCompleting: Sendable` 协议隔离（单测 mock）；`OpenAIChatClient.makeRequest/parseContent` 静态纯函数可单测；错误只分 missingAPIKey / httpStatus(code) / invalidResponse——**日志只落错误类别与耗时，不落 Key 与转写/润色文本本体**（隐私红线）；请求体 max_tokens=500（§4.2.4 成本约束），**不携带 temperature**——Kimi Code 端点仅允许 temperature=1（其他值 400，2026-08-19 踩坑），省略时各服务商走默认（Moonshot 0.3），兼容性最好；httpStatus 错误携带服务端响应体摘录（≤500 字符；错误体为 {"error":{...}} 元信息，不含请求文本本体，是 4xx/5xx 排障关键）。
+- **UTF-8 安全截断**：选区 ≤2KB 按字节截断后回退到最近完整字符边界（`String(bytes:encoding:)` 返回 nil 即断点，逐字节回退），不产 U+FFFD 替换符；加省略号标识截断。
+- **消息组装**：system 用 §9.1 模板原文；user = 【上下文】（App 名+bundleID、窗口标题、选区≤2KB）+【口述内容】原文；旁路（FR-D4）在状态机层跳过润色（wasRefined=false → HUD「未润色」角标）。
+- **端点选型实测（2026-08-19）**：Kimi Code 端点（`api.kimi.com/coding/v1`，会员额度）结构性不适合润色后端——仅允许 temperature=1；强制思考且 reasoning 计入 max_tokens（500 额度被思考吃光 → 正文空串，表现为「请求成功但无内容」）；延迟 3~6.6s（highspeed 档 hello 0.96s 但真实负载仍 3s+）装不进 3s 预算。Moonshot 开放平台（`api.moonshot.cn`，按量付费）`moonshot-v1-8k`：0.6~2s、无强制思考、工程口述质量达标（指代消解/术语保留/分点），为 §8-1 默认值的实测背书；诗歌等离域输入会被强行「工程化」（垃圾进垃圾出，可接受）。真机验收：首试 1.2s 超时（冷连接握手占大头）→ 重试成功（连接复用），端到端 3.3s——连接预热/预算再平衡列后续优化项。
 
 ### 日志设施（2026-08-18，产品级）
 
