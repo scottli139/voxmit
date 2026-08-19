@@ -319,7 +319,9 @@ final class HotkeyManager {
 }
 
 /// CGEventTap 回调（C 约定，不可捕获上下文；经 userInfo 找回实例）。
-/// RunLoop source 挂在主 RunLoop，回调在主线程触发，assumeIsolated 安全。
+/// RunLoop source 挂在主 RunLoop，回调在主线程触发；事件经 Task 派发到主 actor 处理
+/// （不用 MainActor.assumeIsolated——CGEventPost 模拟按键的重入路径下其"当前执行器"校验
+/// 访问野指针，真机两次 SIGSEGV，见 implementation-notes）。
 /// manager 由 VoxmitAppDelegate 持有、与 App 同生命周期，passUnretained 不会悬垂。
 private func hotkeyEventTapCallback(
     proxy: CGEventTapProxy,
@@ -336,15 +338,12 @@ private func hotkeyEventTapCallback(
     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
     let flags = event.flags
     // 提前过滤：tap 只关心 flagsChanged（热键）与 keyDown（Esc，FR-B5）。
-    // Phase 8 注入用 CGEventPost 模拟 Cmd+V / Return，其 keyDown 会经 RunLoop source
-    // 投递回本回调——此重入路径下 MainActor.assumeIsolated 的当前执行器跟踪失效，
-    // 真机 SIGSEGV（EXC_BAD_ACCESS，栈见 hotkeyEventTapCallback → assumeIsolated）。
-    // 非 Esc 的 keyDown 一律直接放行，不进入 MainActor 隔离域。
+    // 非 Esc 的 keyDown（含注入模拟的 Cmd+V / Return）直接放行，减少无谓派发。
     if type == .keyDown && keyCode != HotkeyEventParser.escapeKeyCode {
         return passthrough
     }
     let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-    MainActor.assumeIsolated {
+    Task { @MainActor in
         manager.handleTapEvent(type: type, keyCode: keyCode, flags: flags)
     }
     return passthrough
