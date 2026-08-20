@@ -114,7 +114,18 @@ final class SystemPasteboardManager: PasteboardManaging {
     private var capturedItems: [NSPasteboardItem]?
 
     func capture() -> Int {
-        capturedItems = NSPasteboard.general.pasteboardItems ?? []
+        // writeObjects 拒绝回写系统 vended 的 item（"already associated with another
+        // pasteboard" NSException，Swift 无法 catch → 崩溃，2026-08-20 真机复现）；
+        // 快照必须用取出的数据重建全新 NSPasteboardItem（同时 eager 固化数据，防惰性数据失效）。
+        capturedItems = (NSPasteboard.general.pasteboardItems ?? []).map { item in
+            let fresh = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    fresh.setData(data, forType: type)
+                }
+            }
+            return fresh
+        }
         return NSPasteboard.general.changeCount
     }
 
@@ -125,8 +136,7 @@ final class SystemPasteboardManager: PasteboardManaging {
     }
 
     func restore(ifChangeCountEquals expected: Int) -> Bool {
-        // 空快照不恢复：capture 时剪贴板无 item（pasteboardItems 为 nil → 存 []），
-        // writeObjects([]) 会抛 NSException（Swift 无法 catch）直接崩进程（真机崩溃 2026-08-20）。
+        // 空快照（capture 时剪贴板无 item）放弃恢复：转写文本留在剪贴板供再次粘贴
         guard let items = capturedItems, !items.isEmpty else {
             capturedItems = nil
             return false
