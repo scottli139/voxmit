@@ -34,6 +34,7 @@ struct InjectionAdapterTests {
 struct ClipboardInjectorTests {
 
     /// 测试装置：共享事件日志 + mock 剪贴板/按键 + 虚拟时钟
+    @MainActor
     private struct Fixture: Sendable {
         let eventLog: InjectEventLog
         let pasteboard: MockPasteboard
@@ -53,7 +54,7 @@ struct ClipboardInjectorTests {
             self.injector = ClipboardInjector(
                 pasteboard: pasteboard,
                 keyPoster: keyPoster,
-                clock: clock,
+                delayer: MockInjectorDelayer(clock: clock),
                 axTrustedProvider: { axTrusted },
                 collapseNewlinesProvider: { collapseSetting }
             )

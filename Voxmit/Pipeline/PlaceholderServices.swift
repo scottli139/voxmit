@@ -25,19 +25,18 @@ struct NoOpPromptRefiner: PromptRefining {
 }
 
 /// 占位注入：Phase 8 已落地完整流程，见 ClipboardInjector；本占位仅作未接线/测试默认值。
+@MainActor
 struct PlaceholderClipboardInjector: TextInjecting {
     func inject(text: String, into target: TargetSnapshot, autoSend: Bool) async -> InjectionOutcome {
-        // NSPasteboard 约定主线程访问
-        return await MainActor.run {
-            NSPasteboard.general.clearContents()
-            let ok = NSPasteboard.general.setString(text, forType: .string)
-            if ok {
-                AppLog.info(.injection, "已写入剪贴板（clipboardOnly 档，\(text.count) 字）")
-            } else {
-                AppLog.error(.injection, "剪贴板写入失败")
-            }
-            return ok ? .clipboardOnly : .failed("剪贴板写入失败")
+        // NSPasteboard 约定主线程访问（@MainActor 同步）
+        NSPasteboard.general.clearContents()
+        let ok = NSPasteboard.general.setString(text, forType: .string)
+        if ok {
+            AppLog.info(.injection, "已写入剪贴板（clipboardOnly 档，\(text.count) 字）")
+        } else {
+            AppLog.error(.injection, "剪贴板写入失败")
         }
+        return ok ? .clipboardOnly : .failed("剪贴板写入失败")
     }
 }
 

@@ -3,26 +3,21 @@ import Foundation
 
 /// 注入测试用共享事件日志（记录系统服务调用顺序）。
 /// 单一注入流程内方法按序调用，事件顺序即调用顺序。
-final class InjectEventLog: @unchecked Sendable {
-    private let lock = NSLock()
+/// @MainActor：注入链测试全程主线程，事件日志读写均在主线程。
+@MainActor
+final class InjectEventLog {
     private var events: [String] = []
 
-    func append(_ event: String) {
-        lock.withLock { events.append(event) }
-    }
+    func append(_ event: String) { events.append(event) }
 
-    var snapshot: [String] {
-        lock.withLock { events }
-    }
+    var snapshot: [String] { events }
 
-    func contains(_ event: String) -> Bool {
-        lock.withLock { events.contains(event) }
-    }
+    func contains(_ event: String) -> Bool { events.contains(event) }
 }
 
-/// 剪贴板系统 mock（PasteboardManaging）
-final class MockPasteboard: PasteboardManaging, @unchecked Sendable {
-    private let lock = NSLock()
+/// 剪贴板系统 mock（PasteboardManaging；@MainActor 同步）
+@MainActor
+final class MockPasteboard: PasteboardManaging {
     private let eventLog: InjectEventLog?
 
     private var _captureReturn = 100
@@ -39,51 +34,47 @@ final class MockPasteboard: PasteboardManaging, @unchecked Sendable {
     }
 
     var captureReturn: Int {
-        get { lock.withLock { _captureReturn } }
-        set { lock.withLock { _captureReturn = newValue } }
+        get { _captureReturn }
+        set { _captureReturn = newValue }
     }
     var writeReturn: Int? {
-        get { lock.withLock { _writeReturn } }
-        set { lock.withLock { _writeReturn = newValue } }
+        get { _writeReturn }
+        set { _writeReturn = newValue }
     }
     var restoreReturn: Bool {
-        get { lock.withLock { _restoreReturn } }
-        set { lock.withLock { _restoreReturn = newValue } }
+        get { _restoreReturn }
+        set { _restoreReturn = newValue }
     }
-    var captureCallCount: Int { lock.withLock { _captureCallCount } }
-    var writeCallCount: Int { lock.withLock { _writeCallCount } }
-    var restoreCallCount: Int { lock.withLock { _restoreCallCount } }
-    var receivedText: String? { lock.withLock { _receivedText } }
-    var receivedExpectedChangeCount: Int? { lock.withLock { _receivedExpectedChangeCount } }
+    var captureCallCount: Int { _captureCallCount }
+    var writeCallCount: Int { _writeCallCount }
+    var restoreCallCount: Int { _restoreCallCount }
+    var receivedText: String? { _receivedText }
+    var receivedExpectedChangeCount: Int? { _receivedExpectedChangeCount }
 
-    func capture() async -> Int {
+    func capture() -> Int {
         eventLog?.append("capture")
-        lock.withLock { _captureCallCount += 1 }
-        return lock.withLock { _captureReturn }
+        _captureCallCount += 1
+        return _captureReturn
     }
 
-    func write(text: String) async -> Int? {
+    func write(text: String) -> Int? {
         eventLog?.append("write")
-        lock.withLock {
-            _writeCallCount += 1
-            _receivedText = text
-        }
-        return lock.withLock { _writeReturn }
+        _writeCallCount += 1
+        _receivedText = text
+        return _writeReturn
     }
 
-    func restore(ifChangeCountEquals expected: Int) async -> Bool {
+    func restore(ifChangeCountEquals expected: Int) -> Bool {
         eventLog?.append("restore")
-        lock.withLock {
-            _restoreCallCount += 1
-            _receivedExpectedChangeCount = expected
-        }
-        return lock.withLock { _restoreReturn }
+        _restoreCallCount += 1
+        _receivedExpectedChangeCount = expected
+        return _restoreReturn
     }
 }
 
-/// 模拟按键系统 mock（KeyEventPosting）
-final class MockKeyEventPoster: KeyEventPosting, @unchecked Sendable {
-    private let lock = NSLock()
+/// 模拟按键系统 mock（KeyEventPosting；@MainActor 同步）
+@MainActor
+final class MockKeyEventPoster: KeyEventPosting {
     private let eventLog: InjectEventLog?
     private var _postPasteCallCount = 0
     private var _postReturnCallCount = 0
@@ -92,16 +83,37 @@ final class MockKeyEventPoster: KeyEventPosting, @unchecked Sendable {
         self.eventLog = eventLog
     }
 
-    var postPasteCallCount: Int { lock.withLock { _postPasteCallCount } }
-    var postReturnCallCount: Int { lock.withLock { _postReturnCallCount } }
+    var postPasteCallCount: Int { _postPasteCallCount }
+    var postReturnCallCount: Int { _postReturnCallCount }
 
-    func postPaste() async {
+    func postPaste() {
         eventLog?.append("postPaste")
-        lock.withLock { _postPasteCallCount += 1 }
+        _postPasteCallCount += 1
     }
 
-    func postReturn() async {
+    func postReturn() {
         eventLog?.append("postReturn")
-        lock.withLock { _postReturnCallCount += 1 }
+        _postReturnCallCount += 1
+    }
+}
+
+/// 注入延迟 mock（InjectorDelaying）：用 MockClock 虚拟时间驱动 sleep。
+/// 注意：MockClock.sleep 为 nonisolated，@MainActor 的 mock 调用它会跨执行器 hop；
+/// 测试内由主线程显式 advance 恢复 continuation，hop 可确定性推进（与既有 MockClock 用法一致）。
+@MainActor
+final class MockInjectorDelayer: InjectorDelaying {
+    private let clock: MockClock
+
+    init(clock: MockClock) {
+        self.clock = clock
+    }
+
+    func sleep(for interval: TimeInterval) async -> Bool {
+        do {
+            try await clock.sleep(for: interval)
+            return true
+        } catch {
+            return false
+        }
     }
 }

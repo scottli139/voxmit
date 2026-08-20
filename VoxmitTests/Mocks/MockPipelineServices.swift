@@ -127,8 +127,9 @@ final class MockRefiner: PromptRefining, @unchecked Sendable {
     }
 }
 
-/// 注入 mock
-final class MockInjector: TextInjecting, @unchecked Sendable {
+/// 注入 mock（TextInjecting 已 @MainActor）
+@MainActor
+final class MockInjector: TextInjecting {
     var outcome: InjectionOutcome = .pasted
 
     private(set) var callCount = 0

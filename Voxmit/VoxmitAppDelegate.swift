@@ -15,7 +15,7 @@ final class VoxmitAppDelegate: NSObject, NSApplicationDelegate, ObservableObject
     private(set) lazy var clipboardInjector = ClipboardInjector(
         pasteboard: SystemPasteboardManager(),
         keyPoster: SystemKeyEventPoster(),
-        clock: SystemPipelineClock(),
+        delayer: MainActorInjectorDelayer(),
         axTrustedProvider: { AXIsProcessTrusted() },
         collapseNewlinesProvider: {
             UserDefaults.standard.bool(forKey: SettingsKeys.injectCollapseNewlines)
