@@ -104,12 +104,12 @@
 - **结论**：全量 `xcodebuild test` 正常（TEST SUCCEEDED，242 例，测试主体约 5.5s），定向该 suite 才挂——是定向收集路径 + 该 suite 内 async + MockClock + MainActor settle 循环在 test host 环境下的既有死锁，与具体用例改动无关。
 - **应对**：日常验证走**全量** `xcodebuild test -scheme Voxmit -destination 'platform=macOS'`；需要定向快速反馈时可先 build + 只跑纯同步 suite（如 `LLMClientTests`），避免 `PromptRefinerTests` 定向死锁。挂起的 `xcodebuild` 终止后，test host 残留进程需 `pkill -f 'DerivedData/.*/Voxmit.app/Contents/MacOS/Voxmit'` 清理（否则菜单栏残留多个 Voxmit 图标；`/Applications` 正式实例 `pkill -x Voxmit` 会一并杀掉，测试残留用上述路径精确匹配清理）。
 
-### 注入偶发卡在「注入中」：async continuation 跨执行器丢失（2026-08-19 已修复）
+### 注入偶发卡在「注入中」：async continuation 跨执行器丢失（2026-08-20 彻底修复）
 
-- **现象**：真机偶发注入后 HUD 停在「注入中」，日志止于「已模拟 Cmd+V」，无后续「已恢复原剪贴板」/`state: injecting → injected`；`sample` 采样主线程空闲（`mach_msg` 等事件），注入任务在任何线程栈上都没有符号——即 async 任务挂起且 continuation 永不恢复，不是死锁/阻塞。
-- **根因**：`ClipboardInjector.inject` 原为非隔离 async 方法，从 `@MainActor` 的 `processRecording` 调用后，在 await 点落到通用执行器；随后 `Task.sleep` 与 `MainActor.run` 的跨执行器 hop（通用执行器 ↔ MainActor）偶发丢失 continuation。
-- **修复**：`inject` 与内部 `sleep` 显式标 `@MainActor`，整条注入链锚定主线程，消除跨执行器 hop；`ClipboardInjectorTests` 同步改 `@MainActor`（否则虚拟时钟的 `yield`/`advance` 无法驱动 MainActor 上的注入任务推进）。Swift 6 允许 `@MainActor` witness 非隔离 async 协议要求（隔离收紧）。
-- **教训**：关键路径上的「延迟 + 事后恢复」应显式锚定单一 actor；跨执行器 async hop 在 Swift 6 偶发丢失 continuation，且不表现为崩溃或阻塞，极难排查（要靠日志断点 + 主线程采样结合定位）。
+- **现象**：真机偶发注入后 HUD 停在「注入中」，日志止于「已模拟 Cmd+V」，无后续「已恢复原剪贴板」/`state: injecting → injected`；`sample` 采样主线程空闲（`mach_msg` 等事件），注入任务在任何线程栈上都没有符号——即 async 任务挂起且 continuation 永不恢复，不是死锁/阻塞。此时状态机停在 `.injecting`，再按热键无效（`handleHotkeyDown` 的 `case .idle` guard 直接 return）。
+- **根因（两轮）**：`@MainActor` 上下文 await 任何 nonisolated async 函数，函数在通用执行器完成后 hop 回 MainActor 恢复 continuation 时偶发丢失。第一轮（2026-08-19）只把 `inject`/`sleep` 标 `@MainActor`，但 `clock.sleep`（nonisolated `Task.sleep`）、`pasteboard.*`、`keyPoster.*` 仍是非隔离 async——hop 只是换了个位置，2026-08-20 复发，卡在 `sleep`。
+- **彻底修复（2026-08-20）**：注入链全部 `@MainActor` 且零 hop——`PasteboardManaging`/`KeyEventPosting`/`TextInjecting` 协议标 `@MainActor`，方法改**同步**（`NSPasteboard`/`CGEvent` 主线程直接访问，去掉 `MainActor.run` 往返）；延迟恢复不再走 `PipelineClock`（nonisolated），新增 `@MainActor` 的 `InjectorDelaying` 协议 + `MainActorInjectorDelayer`（`DispatchQueue.main.asyncAfter` + `withCheckedThrowingContinuation`，主线程定时，`NSLock` 保护的 `take()` 保证定时/取消单次 resume）。测试 mock 同步调整，`ClipboardInjectorTests.Fixture` 补 `@MainActor`。
+- **教训**：① 关键路径「延迟 + 事后恢复」要显式锚定单一 actor，并让该链上的**所有** await 都在同一 actor（协议方法也标 @MainActor，而非只标实现）；② `@MainActor` 上下文里不要 await nonisolated async（尤其 `Task.sleep`）——用主线程定时器（`DispatchQueue.main.asyncAfter`）+ continuation 替代；③ 跨执行器 hop 偶发丢失 continuation 不表现为崩溃/阻塞，靠日志断点 + 主线程采样结合定位。
 
 ## 架构要点
 
@@ -129,7 +129,7 @@
 - 状态机时钟注入：`PipelineClock` 协议（`now` + `sleep(for:)`，取消时必须抛 CancellationError）；生产用 `SystemPipelineClock`，单测用 `MockClock` 虚拟时间（`advance(by:)` 唤醒到期 continuation；`withTaskCancellationHandler` 的 `onCancel` 里立即以 CancellationError 唤醒，保证 Esc 取消不依赖时钟推进）。**关键坑**：① sleep 的截止时间必须锚定在事件发生的绝对时刻（Pipeline 里 `remaining = 阈值 - (now - keyDown)`），否则"任务被调度晚于 advance"的竞态让截止点漂到未来；② 协议的非隔离异步方法（transcribe 等）跑在协作线程池而非主 Actor——mock 的可变状态会被主线程（advance/cancel 的 onCancel）与池线程（sleep 注册）并发访问，**必须加锁**（曾因裸字典踩踏 SIGSEGV：cancel 持 Swift 任务状态锁回调 onCancel → removeValue 撞上池线程注册）；注册与 isCancelled 检查须在同一把锁内、resume 在锁外，配合 removeValue 返回nil 保证单次 resume；③ Date 以 2001 纪元存储秒数，大基数下 Double 误差 ~1e-7，"恰好 300ms"的边界断言不可行，用 ±1ms 逼近锁定阈值语义；④ 等待异步链路完成用"主 Actor 探针×N"（`await Task { @MainActor in }.value`，FIFO 保证此前入队工作已执行，链路的每次池跳需一个探针轮次），不用定长 sleep。
 - 录音起点语义（§4.3 易误读）：keyDown **立即** `audio.start()` + 快照目标（避免吞掉开头百毫秒语音），200ms 确认期通过才进入公开的 `.recording`；300ms 误触判定**从进入 recording 起算**；确认期内松开"整次忽略"（静默丢弃，无状态变化），与 Esc 取消（有 `.cancelled` 闪现）区分。
 - 终止态（`.injected` / `.failed` / `.cancelled`）当前**即刻回 idle**（同一同步流程内两次赋值，测试经 Combine 历史可观测）；HUD 反馈与停留时长属 Phase 4，届时再引入停留。
-- §9.1 三个异步协议（`TranscriptionEngine` / `PromptRefining` / `TextInjecting`）已加 `Sendable` 约束：@MainActor 的 Pipeline 跨隔离域调用其非隔离异步方法，Swift 6 下非 Sendable 直接编译错误；实现方（WhisperKit 引擎等）需保持 Sendable。
+- §9.1 三个异步协议（`TranscriptionEngine` / `PromptRefining` / `TextInjecting`）已加 `Sendable` 约束：@MainActor 的 Pipeline 跨隔离域调用其异步方法，Swift 6 下非 Sendable 直接编译错误；实现方（WhisperKit 引擎等）需保持 Sendable。`TextInjecting` 自 2026-08-20 起额外标 `@MainActor`（注入链零 hop，见「注入偶发卡在注入中」节），与另两者（保持非隔离、池线程执行）隔离策略不同。
 - CGEventTap 回调与严格并发：`CGEvent` 非 Sendable，**不能**捕获进 `MainActor.assumeIsolated` 闭包——在 C 回调现场提取 `keyCode` / `flags` 标量后再入隔离域；`Unmanaged.passUnretained(self)` 供 userInfo 回取（manager 与 App 同生命周期，无悬垂风险）。
 - 事件解析与系统交互分离：`HotkeyEventParser` 纯值类型（keyCode/flags → `HotkeyAction`，含"只在沿变化产出事件""按住期间其他修饰键不影响""keyDown 瞬间判定旁路"），单测直接喂合成事件；`HotkeyManager` 只剩 tap 生命周期，不进单测（真机验收）。
 - tap 自愈（§4.2.1）：回调内收到 `tapDisabledByTimeout/UserInput` 立即 `CGEvent.tapEnable`；RunLoop source 失效后不会再有回调，另加 5s 看门狗 Timer 巡检（`CGEvent.tapIsEnabled` / `CFRunLoopSourceIsValid`，失效整体重建）。
@@ -160,7 +160,7 @@
 - 落盘校验分层：下载返回目录存在性（管理器）+ `loadModels()` 成功（引擎激活）兜底；不做逐文件哈希。
 - **Swift 6 并发坑两则**：① @MainActor 类不能直接遵守继承了 Sendable 的协议（"conformance crosses into main actor-isolated code"）——Router 这类需要跨域读的持有器改非隔离类 + NSLock（写主线程断言、读任意线程）；② `@Sendable` 闭包参数仍须显式 `@escaping`（函数型参数默认非逃逸）。
 - Speech 兜底引擎引入**第四个 TCC 权限**（语音识别，`NSSpeechRecognitionUsageDescription` 已入 Info.plist）：`SFSpeechRecognizer.authorizationStatus()` notDetermined 时才请求；`requiresOnDeviceRecognition = true` 前查 `supportsOnDeviceRecognition`；识别回调可能多次返回，continuation 需单次 resume 保护 + 取消时映射 CancellationError（Pipeline 的 Esc 路径期望它）。
-- 占位注入改 `PlaceholderClipboardInjector`（仅写剪贴板返回 `.clipboardOnly`）：让转写文字在 Phase 6/8 之前即可手动粘贴使用；NSPasteboard 约定主线程访问（协议非隔离 async 会跳池线程，须 `await MainActor.run`）。
+- 占位注入改 `PlaceholderClipboardInjector`（仅写剪贴板返回 `.clipboardOnly`）：让转写文字在 Phase 6/8 之前即可手动粘贴使用；NSPasteboard 约定主线程访问。2026-08-20 起 `TextInjecting` 协议标 `@MainActor`，本占位同步改为 `@MainActor` 实现（不再 `MainActor.run`）。
 - **HF 端点回退（2026-08-18 真机）**：huggingface.co 在国内网络不可达（curl 000）；`WhisperKit.download(variant:…, endpoint:)` 支持自定义端点（HubApi 构造参数 endpoint，另支持 `HF_ENDPOINT` 环境变量），无需 fork。落地：官方 → hf-mirror.com 自动回退（`asr.modelRepoEndpoint` 键：unset/auto=回退链，huggingface/hf-mirror=强制，无设置页 UI）；取消（CancellationError）不回退。断点续传跨端点有效：incomplete 文件按**本地目标路径**记录（与域名无关）。端点链机制沿用至自实现下载器；下载执行本体已替换（见下节）。
 
 ### 模型下载三连根因与自实现下载器（2026-08-18 已修复）
@@ -182,7 +182,7 @@
 
 ### 结果注入（Phase 8，FR-F1/FR-F4/FR-F5）
 
-- **NSPasteboard 主线程访问**：`TextInjecting.inject` 是非隔离 async（协作线程池执行），NSPasteboard 约定主线程——`SystemPasteboardManager` 全部方法 `await MainActor.run`（沿用 Phase 5 占位注入的教训，见本地转写节）。
+- **NSPasteboard 主线程访问**：`TextInjecting.inject` / `PasteboardManaging` / `KeyEventPosting` 均 `@MainActor`（2026-08-20 起），`SystemPasteboardManager` / `SystemKeyEventPoster` 方法为**同步**实现，主线程直接访问 NSPasteboard / 合成 CGEvent，不再 `MainActor.run` 往返（彻底消除跨执行器 hop，见「注入偶发卡在注入中」节）。
 - **剪贴板快照/恢复**：`pasteboardItems`（nullable，Swift 侧 `[NSPasteboardItem]?`，SDK 头文件确认）快照后 `writeObjects(items)` 恢复；`clearContents` 不会使已保存的 NSPasteboardItem 失效（对象独立于 pasteboard）。
 - **changeCount 竞争保护（§4.2.6）**：capture 存 items，write 返回写入后的 changeCount，restore 前比对当前 changeCount——不等（用户复制了新内容）则放弃恢复并丢弃快照，绝不覆盖用户新内容。注意比对的是 write 后的 changeCount（非 capture 的），因为 write 会使 changeCount +1。
 - **降级语义关键**：`clipboardOnly` 档只 write、**不 capture 不 restore**——文本必须留在剪贴板供手动 Cmd+V，若恢复原剪贴板会导致用户粘贴失败。这与完整流程的"恢复"语义相反，容易写错。
