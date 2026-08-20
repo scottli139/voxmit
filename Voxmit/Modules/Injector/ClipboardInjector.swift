@@ -125,7 +125,12 @@ final class SystemPasteboardManager: PasteboardManaging {
     }
 
     func restore(ifChangeCountEquals expected: Int) -> Bool {
-        guard let items = capturedItems else { return false }
+        // 空快照不恢复：capture 时剪贴板无 item（pasteboardItems 为 nil → 存 []），
+        // writeObjects([]) 会抛 NSException（Swift 无法 catch）直接崩进程（真机崩溃 2026-08-20）。
+        guard let items = capturedItems, !items.isEmpty else {
+            capturedItems = nil
+            return false
+        }
         guard NSPasteboard.general.changeCount == expected else {
             capturedItems = nil
             return false
