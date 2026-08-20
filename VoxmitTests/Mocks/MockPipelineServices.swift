@@ -127,7 +127,7 @@ final class MockRefiner: PromptRefining, @unchecked Sendable {
     }
 }
 
-/// 注入 mock（TextInjecting 已 @MainActor）
+/// 注入 mock（TextInjecting 已 @MainActor，同步）
 @MainActor
 final class MockInjector: TextInjecting {
     var outcome: InjectionOutcome = .pasted
@@ -137,7 +137,7 @@ final class MockInjector: TextInjecting {
     private(set) var receivedTarget: TargetSnapshot?
     private(set) var receivedAutoSend: Bool?
 
-    func inject(text: String, into target: TargetSnapshot, autoSend: Bool) async -> InjectionOutcome {
+    func inject(text: String, into target: TargetSnapshot, autoSend: Bool) -> InjectionOutcome {
         callCount += 1
         receivedText = text
         receivedTarget = target

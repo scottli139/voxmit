@@ -22,13 +22,12 @@ protocol KeyEventPosting: Sendable {
     func postReturn()
 }
 
-/// 注入链延迟抽象（@MainActor）：sleep 全程主线程（DispatchQueue.main 定时），
-/// 替代 PipelineClock 的 nonisolated sleep——@MainActor 上下文 await nonisolated async
-/// 会跨执行器 hop，偶发丢 continuation（真机 bug，见 docs/implementation-notes.md）。
+/// 注入链延迟调度抽象（@MainActor）：把「稍后恢复剪贴板 / 模拟 Return」同步调度到主线程，
+/// 不挂起当前任务——彻底避开 async 跨执行器 hop 丢 continuation（真机 bug，见 implementation-notes）。
 @MainActor
 protocol InjectorDelaying: Sendable {
-    /// 睡眠指定时长；正常睡满返回 true，任务被取消返回 false（吞掉取消）
-    func sleep(for interval: TimeInterval) async -> Bool
+    /// 在 interval 秒后于主线程执行 action（同步调度，返回前不挂起）
+    func schedule(after interval: TimeInterval, _ action: @escaping @MainActor @Sendable () -> Void)
 }
 
 /// 结果注入 P0 实装（需求文档 §4.2.6 / FR-F1 / FR-F4）：
@@ -36,7 +35,8 @@ protocol InjectorDelaying: Sendable {
 /// 无辅助功能权限 / 无有效目标时降级为仅写剪贴板（不恢复）；
 /// autoSend 开启时粘贴后约 150ms 模拟 Return（FR-F4）。
 /// 换行折叠决策收敛在 InjectionAdapter（纯逻辑可单测）。
-/// 全程 @MainActor：pasteboard/key/delay 均为 @MainActor，零跨执行器 hop。
+/// 全程 @MainActor + 同步：主体同步完成，延迟动作经 `InjectorDelaying.schedule` 主线程调度，
+/// 零 async await、零跨执行器 hop。
 @MainActor
 struct ClipboardInjector: TextInjecting {
     private let pasteboard: any PasteboardManaging
@@ -59,7 +59,7 @@ struct ClipboardInjector: TextInjecting {
         self.collapseNewlinesProvider = collapseNewlinesProvider
     }
 
-    func inject(text: String, into target: TargetSnapshot, autoSend: Bool) async -> InjectionOutcome {
+    func inject(text: String, into target: TargetSnapshot, autoSend: Bool) -> InjectionOutcome {
         // 1. 换行折叠（终端目标默认开启；设置/分类决策在 InjectionAdapter）
         let category = AppCategoryMapper.category(for: target.bundleID)
         let shouldCollapse = InjectionAdapter.shouldCollapseNewlines(
@@ -77,7 +77,7 @@ struct ClipboardInjector: TextInjecting {
             return .clipboardOnly
         }
 
-        // 3. 完整流程：快照 → 写入 → Cmd+V
+        // 3. 完整流程：快照 → 写入 → Cmd+V（全程同步）
         let originalChangeCount = pasteboard.capture()
         guard let afterWrite = pasteboard.write(text: finalText) else {
             return .failed("剪贴板写入失败")
@@ -86,21 +86,21 @@ struct ClipboardInjector: TextInjecting {
         keyPoster.postPaste()
         AppLog.info(.injection, "已模拟 Cmd+V 至 \(target.appName)（\(finalText.count) 字）")
 
-        // 4. 约 300ms 后恢复剪贴板；取消分支也要尽力 restore（避免污染用户剪贴板）
-        let slept = await delayer.sleep(for: 0.3)
-        let restored = pasteboard.restore(ifChangeCountEquals: afterWrite)
-        if restored {
-            AppLog.debug(.injection, "已恢复原剪贴板（changeCount \(afterWrite) 未变）")
-        } else {
-            AppLog.notice(.injection, "检测到剪贴板被用户改写（changeCount ≠ \(afterWrite)），放弃恢复")
-        }
+        // 4. 约 300ms 后恢复剪贴板（主线程调度，不挂起当前任务；同步闭包内无 async await）
+        delayer.schedule(after: 0.3) { [pasteboard, keyPoster, delayer] in
+            let restored = pasteboard.restore(ifChangeCountEquals: afterWrite)
+            if restored {
+                AppLog.debug(.injection, "已恢复原剪贴板（changeCount \(afterWrite) 未变）")
+            } else {
+                AppLog.notice(.injection, "检测到剪贴板被用户改写（changeCount ≠ \(afterWrite)），放弃恢复")
+            }
 
-        // 5. autoSend：粘贴后约 150ms 模拟 Return（FR-F4）；首次睡眠被取消则跳过
-        if autoSend && slept {
-            let secondSlept = await delayer.sleep(for: 0.15)
-            if secondSlept {
-                keyPoster.postReturn()
-                AppLog.info(.injection, "已模拟 Return 自动发送（FR-F4）")
+            // 5. autoSend：恢复后再约 150ms 模拟 Return（FR-F4）
+            if autoSend {
+                delayer.schedule(after: 0.15) {
+                    keyPoster.postReturn()
+                    AppLog.info(.injection, "已模拟 Return 自动发送（FR-F4）")
+                }
             }
         }
 
@@ -159,47 +159,13 @@ struct SystemKeyEventPoster: KeyEventPosting {
     }
 }
 
-/// 真实注入延迟（@MainActor）：DispatchQueue.main 定时，全程主线程无执行器 hop。
-/// 用 `withCheckedThrowingContinuation`（body 同步执行、resume 由主线程定时/取消触发）
-/// 而非 `Task.sleep`——后者是 nonisolated async，在 @MainActor 上下文 await 会跨执行器 hop。
+/// 真实注入延迟调度（@MainActor）：DispatchQueue.main.asyncAfter 主线程定时，
+/// 全程主线程、无 async await、无执行器 hop。
 @MainActor
 struct MainActorInjectorDelayer: InjectorDelaying {
-    func sleep(for interval: TimeInterval) async -> Bool {
-        // 引用类型持有 continuation，供定时回调与取消回调竞争单次 resume
-        final class ContinuationBox: @unchecked Sendable {
-            private let lock = NSLock()
-            private var _continuation: CheckedContinuation<Void, Error>?
-
-            var continuation: CheckedContinuation<Void, Error>? {
-                get { lock.withLock { _continuation } }
-                set { lock.withLock { _continuation = newValue } }
-            }
-
-            /// 原子取出并清空，保证定时/取消只 resume 一次
-            func take() -> CheckedContinuation<Void, Error>? {
-                lock.withLock {
-                    let c = _continuation
-                    _continuation = nil
-                    return c
-                }
-            }
-        }
-
-        let box = ContinuationBox()
-        do {
-            try await withTaskCancellationHandler {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    box.continuation = continuation
-                    DispatchQueue.main.asyncAfter(deadline: .now() + interval) {
-                        box.take()?.resume()
-                    }
-                }
-            } onCancel: {
-                box.take()?.resume(throwing: CancellationError())
-            }
-            return true
-        } catch {
-            return false
+    func schedule(after interval: TimeInterval, _ action: @escaping @MainActor @Sendable () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + interval) {
+            action()
         }
     }
 }

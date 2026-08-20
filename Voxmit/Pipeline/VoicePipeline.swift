@@ -248,7 +248,7 @@ final class VoicePipeline: ObservableObject {
             }
 
             state = .injecting
-            let outcome = await injector.inject(text: finalText, into: target, autoSend: autoSendProvider())
+            let outcome = injector.inject(text: finalText, into: target, autoSend: autoSendProvider())
             try Task.checkCancellation()
             // HUD 反馈态数据源（Phase 4）：档位 + 是否实际润色（"未润色"角标）
             lastInjectionReport = InjectionReport(outcome: outcome, wasRefined: wasRefined)

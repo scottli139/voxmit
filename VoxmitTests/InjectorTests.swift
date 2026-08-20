@@ -27,34 +27,34 @@ struct InjectionAdapterTests {
     }
 }
 
-/// ClipboardInjector（Phase 8 P0）降级/完整流程/竞争保护
-/// inject 为 @MainActor（真机修复：跨执行器 hop 偶发丢失 continuation，见 implementation-notes），
-/// 测试同样跑在 MainActor 上，让虚拟时钟的 yield/advance 能可靠驱动注入任务推进。
+/// ClipboardInjector（Phase 8 P0）降级/完整流程/竞争保护。
+/// inject 为 @MainActor 同步方法：主体同步完成，延迟恢复经 `InjectorDelaying.schedule`
+/// 主线程调度（零 async await、零跨执行器 hop，真机修复，见 implementation-notes）。
 @MainActor
 struct ClipboardInjectorTests {
 
-    /// 测试装置：共享事件日志 + mock 剪贴板/按键 + 虚拟时钟
+    /// 测试装置：共享事件日志 + mock 剪贴板/按键/延迟调度器
     @MainActor
     private struct Fixture: Sendable {
         let eventLog: InjectEventLog
         let pasteboard: MockPasteboard
         let keyPoster: MockKeyEventPoster
-        let clock: MockClock
+        let delayer: MockInjectorDelayer
         let injector: ClipboardInjector
 
         init(axTrusted: Bool = true, collapseSetting: Bool = false) {
             let eventLog = InjectEventLog()
             let pasteboard = MockPasteboard(eventLog: eventLog)
             let keyPoster = MockKeyEventPoster(eventLog: eventLog)
-            let clock = MockClock()
+            let delayer = MockInjectorDelayer()
             self.eventLog = eventLog
             self.pasteboard = pasteboard
             self.keyPoster = keyPoster
-            self.clock = clock
+            self.delayer = delayer
             self.injector = ClipboardInjector(
                 pasteboard: pasteboard,
                 keyPoster: keyPoster,
-                delayer: MockInjectorDelayer(clock: clock),
+                delayer: delayer,
                 axTrustedProvider: { axTrusted },
                 collapseNewlinesProvider: { collapseSetting }
             )
@@ -66,24 +66,12 @@ struct ClipboardInjectorTests {
                        capturedAt: Date(timeIntervalSince1970: 0))
     }
 
-    /// 让协作线程池里的 inject 任务推进到下一个挂起点（sleep 注册）
-    private func yieldUntil(_ condition: @escaping () -> Bool) async {
-        for _ in 0..<10_000 {
-            if condition() { return }
-            await Task.yield()
-        }
-    }
-
-    private func yieldMany() async {
-        for _ in 0..<100 { await Task.yield() }
-    }
-
     // MARK: - 降级
 
-    @Test func inject_noAXPermission_clipboardOnlyWithoutCaptureOrRestore() async {
+    @Test func inject_noAXPermission_clipboardOnlyWithoutCaptureOrRestore() {
         let f = Fixture(axTrusted: false)
 
-        let outcome = await f.injector.inject(text: "hello", into: target(), autoSend: false)
+        let outcome = f.injector.inject(text: "hello", into: target(), autoSend: false)
 
         #expect(outcome == .clipboardOnly)
         #expect(f.pasteboard.captureCallCount == 0)
@@ -92,12 +80,13 @@ struct ClipboardInjectorTests {
         #expect(f.keyPoster.postPasteCallCount == 0)
         #expect(f.keyPoster.postReturnCallCount == 0)
         #expect(f.pasteboard.receivedText == "hello")
+        #expect(f.delayer.scheduled.isEmpty)
     }
 
-    @Test func inject_zeroPID_clipboardOnly() async {
+    @Test func inject_zeroPID_clipboardOnly() {
         let f = Fixture(axTrusted: true)
 
-        let outcome = await f.injector.inject(
+        let outcome = f.injector.inject(
             text: "hello", into: target(bundleID: "com.apple.Terminal", pid: 0), autoSend: false
         )
 
@@ -108,10 +97,10 @@ struct ClipboardInjectorTests {
         #expect(f.keyPoster.postPasteCallCount == 0)
     }
 
-    @Test func inject_emptyBundleID_clipboardOnly() async {
+    @Test func inject_emptyBundleID_clipboardOnly() {
         let f = Fixture(axTrusted: true)
 
-        let outcome = await f.injector.inject(
+        let outcome = f.injector.inject(
             text: "hello", into: target(bundleID: "", pid: 1234), autoSend: false
         )
 
@@ -124,17 +113,16 @@ struct ClipboardInjectorTests {
 
     // MARK: - 完整流程与顺序
 
-    @Test func inject_authorizedValidTarget_pastesThenRestores() async {
+    @Test func inject_authorizedValidTarget_pastesThenRestores() {
         let f = Fixture(axTrusted: true)
 
-        let task = Task { await f.injector.inject(text: "hello", into: target(), autoSend: false) }
-        await yieldUntil { f.eventLog.contains("postPaste") }
-        await yieldMany() // 让 sleep(0.3) 在推进虚拟时间前完成注册
-        f.clock.advance(by: 0.3)
-        let outcome = await task.value
+        let outcome = f.injector.inject(text: "hello", into: target(), autoSend: false)
 
         #expect(outcome == .pasted)
-        // capture → write → postPaste → restore（sleep 位于 postPaste 与 restore 之间）
+        // 主体同步完成：capture → write → postPaste 已发生；restore 已调度未执行
+        #expect(f.eventLog.snapshot == ["capture", "write", "postPaste"])
+        #expect(f.delayer.scheduled.map(\.delay) == [0.3])
+        f.delayer.fireAll()
         #expect(f.eventLog.snapshot == ["capture", "write", "postPaste", "restore"])
         #expect(f.pasteboard.captureCallCount == 1)
         #expect(f.pasteboard.writeCallCount == 1)
@@ -145,49 +133,42 @@ struct ClipboardInjectorTests {
         #expect(f.pasteboard.receivedExpectedChangeCount == f.pasteboard.writeReturn)
     }
 
-    @Test func inject_autoSend_postsReturnAfterSecondDelay() async {
+    @Test func inject_autoSend_postsReturnAfterSecondDelay() {
         let f = Fixture(axTrusted: true)
 
-        let task = Task { await f.injector.inject(text: "hi", into: target(), autoSend: true) }
-        await yieldUntil { f.eventLog.contains("postPaste") }
-        await yieldMany()
-        f.clock.advance(by: 0.3) // 首次睡眠 → restore
-        await yieldUntil { f.eventLog.contains("restore") }
-        await yieldMany() // 让 sleep(0.15) 完成注册
-        f.clock.advance(by: 0.15)
-        let outcome = await task.value
+        let outcome = f.injector.inject(text: "hi", into: target(), autoSend: true)
 
         #expect(outcome == .pasted)
+        f.delayer.fireAll() // 执行 restore，并 schedule postReturn
+        f.delayer.fireAll() // 执行 postReturn
         #expect(f.eventLog.snapshot == ["capture", "write", "postPaste", "restore", "postReturn"])
         #expect(f.keyPoster.postReturnCallCount == 1)
     }
 
     // MARK: - 写入失败
 
-    @Test func inject_writeFailure_returnsFailed() async {
+    @Test func inject_writeFailure_returnsFailed() {
         let f = Fixture(axTrusted: true)
         f.pasteboard.writeReturn = nil
 
-        let outcome = await f.injector.inject(text: "hello", into: target(), autoSend: false)
+        let outcome = f.injector.inject(text: "hello", into: target(), autoSend: false)
 
         #expect(outcome == .failed("剪贴板写入失败"))
         #expect(f.pasteboard.captureCallCount == 1) // 完整流程先快照再写
         #expect(f.pasteboard.writeCallCount == 1)
         #expect(f.keyPoster.postPasteCallCount == 0)
         #expect(f.pasteboard.restoreCallCount == 0)
+        #expect(f.delayer.scheduled.isEmpty)
     }
 
     // MARK: - changeCount 竞争保护
 
-    @Test func inject_restoreConflict_stillPasted() async {
+    @Test func inject_restoreConflict_stillPasted() {
         let f = Fixture(axTrusted: true)
         f.pasteboard.restoreReturn = false // 模拟恢复期间用户改写了剪贴板
 
-        let task = Task { await f.injector.inject(text: "hello", into: target(), autoSend: false) }
-        await yieldUntil { f.eventLog.contains("postPaste") }
-        await yieldMany()
-        f.clock.advance(by: 0.3)
-        let outcome = await task.value
+        let outcome = f.injector.inject(text: "hello", into: target(), autoSend: false)
+        f.delayer.fireAll()
 
         // 竞争放弃恢复不改注入结果：文本已送达，仅剪贴板保持用户最新内容
         #expect(outcome == .pasted)
@@ -196,10 +177,10 @@ struct ClipboardInjectorTests {
 
     // MARK: - 换行折叠
 
-    @Test func inject_terminalCollapseEnabled_writesCollapsedText() async {
+    @Test func inject_terminalCollapseEnabled_writesCollapsedText() {
         let f = Fixture(axTrusted: false, collapseSetting: true)
 
-        let outcome = await f.injector.inject(
+        let outcome = f.injector.inject(
             text: "第一行\n第二行\r\n第三行\r第四行",
             into: target(bundleID: "com.apple.Terminal"),
             autoSend: false
@@ -209,11 +190,11 @@ struct ClipboardInjectorTests {
         #expect(f.pasteboard.receivedText == "第一行 第二行 第三行 第四行")
     }
 
-    @Test func inject_editorTarget_doesNotCollapse() async {
+    @Test func inject_editorTarget_doesNotCollapse() {
         let f = Fixture(axTrusted: false, collapseSetting: true)
         let original = "第一行\n第二行"
 
-        let outcome = await f.injector.inject(
+        let outcome = f.injector.inject(
             text: original,
             into: target(bundleID: "com.microsoft.VSCode"),
             autoSend: false

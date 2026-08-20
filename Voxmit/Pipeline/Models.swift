@@ -55,12 +55,12 @@ protocol PromptRefining: Sendable {
 }
 
 /// 结果注入（Phase 8 实现）
-/// @MainActor：注入链全程主线程（NSPasteboard/CGEvent 主线程访问 + 延迟恢复），
-/// 避免跨执行器 hop 偶发丢 continuation（真机修复，见 docs/implementation-notes.md）。
+/// @MainActor：注入链全程主线程（NSPasteboard/CGEvent 主线程访问 + 延迟调度），
+/// 方法同步执行，避免跨执行器 hop 偶发丢 continuation（真机修复，见 docs/implementation-notes.md）。
 @MainActor
 protocol TextInjecting: Sendable {
     /// 实现内部处理逐级降级；返回值表示最终实际到达的档位
-    func inject(text: String, into target: TargetSnapshot, autoSend: Bool) async -> InjectionOutcome
+    func inject(text: String, into target: TargetSnapshot, autoSend: Bool) -> InjectionOutcome
 }
 
 /// 注入结果档位

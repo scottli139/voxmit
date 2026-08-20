@@ -97,23 +97,21 @@ final class MockKeyEventPoster: KeyEventPosting {
     }
 }
 
-/// 注入延迟 mock（InjectorDelaying）：用 MockClock 虚拟时间驱动 sleep。
-/// 注意：MockClock.sleep 为 nonisolated，@MainActor 的 mock 调用它会跨执行器 hop；
-/// 测试内由主线程显式 advance 恢复 continuation，hop 可确定性推进（与既有 MockClock 用法一致）。
+/// 注入延迟调度 mock（InjectorDelaying）：记录调度动作，测试手动 fire 触发。
 @MainActor
 final class MockInjectorDelayer: InjectorDelaying {
-    private let clock: MockClock
+    private(set) var scheduled: [(delay: TimeInterval, action: @MainActor @Sendable () -> Void)] = []
 
-    init(clock: MockClock) {
-        self.clock = clock
+    func schedule(after interval: TimeInterval, _ action: @escaping @MainActor @Sendable () -> Void) {
+        scheduled.append((interval, action))
     }
 
-    func sleep(for interval: TimeInterval) async -> Bool {
-        do {
-            try await clock.sleep(for: interval)
-            return true
-        } catch {
-            return false
+    /// 测试：按调度顺序执行所有已排队动作；fireAll 期间新 schedule 的动作留到下一次
+    func fireAll() {
+        let batch = scheduled
+        scheduled.removeAll()
+        for (_, action) in batch {
+            action()
         }
     }
 }

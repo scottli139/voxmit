@@ -27,7 +27,7 @@ struct NoOpPromptRefiner: PromptRefining {
 /// 占位注入：Phase 8 已落地完整流程，见 ClipboardInjector；本占位仅作未接线/测试默认值。
 @MainActor
 struct PlaceholderClipboardInjector: TextInjecting {
-    func inject(text: String, into target: TargetSnapshot, autoSend: Bool) async -> InjectionOutcome {
+    func inject(text: String, into target: TargetSnapshot, autoSend: Bool) -> InjectionOutcome {
         // NSPasteboard 约定主线程访问（@MainActor 同步）
         NSPasteboard.general.clearContents()
         let ok = NSPasteboard.general.setString(text, forType: .string)
