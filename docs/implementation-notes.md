@@ -184,6 +184,7 @@
 
 - **NSPasteboard 主线程访问**：`TextInjecting.inject` / `PasteboardManaging` / `KeyEventPosting` 均 `@MainActor`（2026-08-20 起），`SystemPasteboardManager` / `SystemKeyEventPoster` 方法为**同步**实现，主线程直接访问 NSPasteboard / 合成 CGEvent，不再 `MainActor.run` 往返（彻底消除跨执行器 hop，见「注入偶发卡在注入中」节）。
 - **剪贴板快照/恢复**：`pasteboardItems`（nullable，Swift 侧 `[NSPasteboardItem]?`，SDK 头文件确认）快照后 `writeObjects(items)` 恢复；`clearContents` 不会使已保存的 NSPasteboardItem 失效（对象独立于 pasteboard）。
+- **空快照恢复崩溃（2026-08-20 真机 SIGABRT，多次复现）**：剪贴板无 item 时 `pasteboardItems` 为 nil，`?? []` 使快照存成**空数组**；restore 时 `guard let` 只判 nil 拦不住空数组，`writeObjects([])` 抛 `NSException`（AppKit 约束：禁止向 pasteboard 写空数组），Swift 无法 catch → `abort()` 主线程崩溃。崩溃时点为粘贴成功后约 300ms（延迟恢复闭包），表现为"用着用着自己退出"。修法：restore 加 `!items.isEmpty` 保护，空快照直接放弃恢复。教训：凡是桥接 AppKit 抛 NSException 的 API（`writeObjects:` 等），入参合法性必须在 Swift 侧前置校验。
 - **changeCount 竞争保护（§4.2.6）**：capture 存 items，write 返回写入后的 changeCount，restore 前比对当前 changeCount——不等（用户复制了新内容）则放弃恢复并丢弃快照，绝不覆盖用户新内容。注意比对的是 write 后的 changeCount（非 capture 的），因为 write 会使 changeCount +1。
 - **降级语义关键**：`clipboardOnly` 档只 write、**不 capture 不 restore**——文本必须留在剪贴板供手动 Cmd+V，若恢复原剪贴板会导致用户粘贴失败。这与完整流程的"恢复"语义相反，容易写错。
 - **CGEvent 模拟按键需辅助功能权限**（非输入监控，§4.4 误区）：`CGEventPost` 无权限时静默失败不报错，故注入前必须 `AXIsProcessTrusted()` 预检，失败直接降级仅剪贴板（不做无效 Cmd+V）。Cmd+V = virtualKey 0x09 + `.maskCommand`；Return = 0x24；source 用 `.combinedSessionState`，post 到 `.cghidEventTap`，keyDown+keyUp 成对发。
