@@ -107,9 +107,9 @@
 ### 注入偶发卡在「注入中」：async continuation 跨执行器丢失（2026-08-20 彻底修复）
 
 - **现象**：真机偶发注入后 HUD 停在「注入中」，日志止于「已模拟 Cmd+V」，无后续「已恢复原剪贴板」/`state: injecting → injected`；`sample` 采样主线程空闲（`mach_msg` 等事件），注入任务在任何线程栈上都没有符号——即 async 任务挂起且 continuation 永不恢复，不是死锁/阻塞。此时状态机停在 `.injecting`，再按热键无效（`handleHotkeyDown` 的 `case .idle` guard 直接 return）。
-- **根因（两轮）**：`@MainActor` 上下文 await 任何 nonisolated async 函数，函数在通用执行器完成后 hop 回 MainActor 恢复 continuation 时偶发丢失。第一轮（2026-08-19）只把 `inject`/`sleep` 标 `@MainActor`，但 `clock.sleep`（nonisolated `Task.sleep`）、`pasteboard.*`、`keyPoster.*` 仍是非隔离 async——hop 只是换了个位置，2026-08-20 复发，卡在 `sleep`。
-- **彻底修复（2026-08-20）**：注入链全部 `@MainActor` 且零 hop——`PasteboardManaging`/`KeyEventPosting`/`TextInjecting` 协议标 `@MainActor`，方法改**同步**（`NSPasteboard`/`CGEvent` 主线程直接访问，去掉 `MainActor.run` 往返）；延迟恢复不再走 `PipelineClock`（nonisolated），新增 `@MainActor` 的 `InjectorDelaying` 协议 + `MainActorInjectorDelayer`（`DispatchQueue.main.asyncAfter` + `withCheckedThrowingContinuation`，主线程定时，`NSLock` 保护的 `take()` 保证定时/取消单次 resume）。测试 mock 同步调整，`ClipboardInjectorTests.Fixture` 补 `@MainActor`。
-- **教训**：① 关键路径「延迟 + 事后恢复」要显式锚定单一 actor，并让该链上的**所有** await 都在同一 actor（协议方法也标 @MainActor，而非只标实现）；② `@MainActor` 上下文里不要 await nonisolated async（尤其 `Task.sleep`）——用主线程定时器（`DispatchQueue.main.asyncAfter`）+ continuation 替代；③ 跨执行器 hop 偶发丢失 continuation 不表现为崩溃/阻塞，靠日志断点 + 主线程采样结合定位。
+- **根因（三轮）**：`@MainActor` 上下文 await 任何 nonisolated async 函数，函数在通用执行器完成后 hop 回 MainActor 恢复 continuation 时偶发丢失。第一轮（2026-08-19）只把 `inject`/`sleep` 标 `@MainActor`，但 `clock.sleep`（nonisolated `Task.sleep`）、`pasteboard.*`、`keyPoster.*` 仍非隔离 async——hop 换位置；第二轮（2026-08-20）改用 `withCheckedThrowingContinuation` 做延迟，但该函数与 `withTaskCancellationHandler` 本身也是 nonisolated async，await 它们照样 hop，卡在 `delayer.sleep`。
+- **彻底修复（2026-08-20）**：`TextInjecting.inject` 改**同步**方法（`VoicePipeline` 调用去 `await`），注入主体（快照→写入→Cmd+V）同步完成；延迟恢复剪贴板 / autoSend 回车不再用 async 挂起，改 `InjectorDelaying.schedule`（`@MainActor` 同步调度）+ 生产 `MainActorInjectorDelayer` 走 `DispatchQueue.main.asyncAfter`，闭包内零 async await。整条注入链零 await、零跨执行器 hop。
+- **教训**：① `@MainActor` 上下文里 await **任何** nonisolated async（`Task.sleep`、`withCheckedContinuation`、`withTaskCancellationHandler` 都算）都可能 hop 丢 continuation——要彻底避免，只能让关键链上的方法**同步执行**、延迟动作走主线程 `DispatchQueue` 调度；② 跨执行器 hop 偶发丢失 continuation 不表现为崩溃/阻塞，靠日志断点 + 主线程采样结合定位。
 
 ## 架构要点
 
